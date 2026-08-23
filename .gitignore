@@ -1,0 +1,12 @@
+build
+docs/doxygen/
+mx.scratch
+.agent
+!.settings
+
+# Python host tooling
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+*.egg-info/
