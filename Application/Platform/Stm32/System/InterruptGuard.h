@@ -11,8 +11,7 @@ namespace dda {
 /** Restores the interrupt mask that was active when the guard was created. */
 class InterruptGuard {
 public:
-  InterruptGuard() noexcept
-      : _interruptState(__get_PRIMASK()), _active(true) {
+  InterruptGuard() noexcept : _interruptState(__get_PRIMASK()), _active(true) {
     __disable_irq();
   }
 

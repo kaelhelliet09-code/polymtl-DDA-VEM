@@ -12,10 +12,8 @@ constexpr float PowerLsbMultiplier = 25.0F;
 constexpr float SignedRegisterScale = 32768.0F;
 constexpr float MaximumCalibration = 32767.0F;
 constexpr uint32_t I2cTimeoutMs = 10U;
-constexpr uint16_t DefaultConfiguration =
-    static_cast<uint16_t>(0x4127U |
-                          static_cast<uint16_t>(
-                              dda::config::Ina226AveragingSetting));
+constexpr uint16_t DefaultConfiguration = static_cast<uint16_t>(
+    0x4127U | static_cast<uint16_t>(dda::config::Ina226AveragingSetting));
 } // namespace
 
 namespace dda {
@@ -47,8 +45,8 @@ bool Ina226::configureCalibration() noexcept {
   }
 
   // A single-precision boundary result can be fractionally above 32767.
-  _calibration = static_cast<uint16_t>(
-      std::min(calibrationValue, MaximumCalibration));
+  _calibration =
+      static_cast<uint16_t>(std::min(calibrationValue, MaximumCalibration));
   _currentLsbA = CalibrationNumerator /
                  (static_cast<float>(_calibration) * _shuntResistanceOhms);
   return true;
@@ -63,9 +61,8 @@ HAL_StatusTypeDef Ina226::init() noexcept {
     return HAL_ERROR;
   }
 
-  HAL_StatusTypeDef status =
-      _i2c.writeRegister(static_cast<uint8_t>(Register::Calibration),
-                         _calibration, I2cTimeoutMs);
+  HAL_StatusTypeDef status = _i2c.writeRegister(
+      static_cast<uint8_t>(Register::Calibration), _calibration, I2cTimeoutMs);
   if (status == HAL_OK) {
     status = _i2c.writeRegister(static_cast<uint8_t>(Register::Configuration),
                                 DefaultConfiguration, I2cTimeoutMs);
@@ -84,17 +81,16 @@ HAL_StatusTypeDef Ina226::init() noexcept {
   return HAL_OK;
 }
 
-HAL_StatusTypeDef Ina226::readRegister(uint8_t registerAddress,
-                                       uint16_t &value,
+HAL_StatusTypeDef Ina226::readRegister(uint8_t registerAddress, uint16_t &value,
                                        uint32_t timeoutMs) noexcept {
   return _i2c.readRegister(registerAddress, value, timeoutMs);
 }
 
-HAL_StatusTypeDef Ina226::configurePowerOverLimitAlert(
-    uint32_t thresholdMilliwatts, uint32_t timeoutMs) noexcept {
+HAL_StatusTypeDef
+Ina226::configurePowerOverLimitAlert(uint32_t thresholdMilliwatts,
+                                     uint32_t timeoutMs) noexcept {
   const float scaleW = powerLsbW();
-  if ((timeoutMs == 0U) || (thresholdMilliwatts == 0U) ||
-      !(scaleW > 0.0F)) {
+  if ((timeoutMs == 0U) || (thresholdMilliwatts == 0U) || !(scaleW > 0.0F)) {
     return HAL_ERROR;
   }
 
@@ -133,9 +129,8 @@ HAL_StatusTypeDef Ina226::configurePowerOverLimitAlert(
   }
   // AFF, CVRF, and OVF are live read-only status flags. Compare only writable
   // configuration bits.
-  if ((status == HAL_OK) &&
-      ((readback & AlertConfigurationWritableMask) !=
-       PowerOverLimitAlertMask)) {
+  if ((status == HAL_OK) && ((readback & AlertConfigurationWritableMask) !=
+                             PowerOverLimitAlertMask)) {
     status = HAL_ERROR;
   }
   return status;

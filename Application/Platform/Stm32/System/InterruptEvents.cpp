@@ -88,6 +88,7 @@ bool takeSafetyInterruptEvent() noexcept {
 extern "C" void HAL_GPIO_EXTI_Falling_Callback(uint16_t gpioPin) {
   switch (gpioPin) {
   case FAULT_H1_Pin:
+
     safetyInterruptPending = true;
     dda::CoilController::handleDriverFaultFromIsr(dda::Driver::H1);
     break;

@@ -32,8 +32,7 @@ public:
    * @param pin HAL GpioPin pin mask.
    * @param direction Logical direction used to reject incompatible operations.
    */
-  GpioPin(GPIO_TypeDef *port, uint16_t pin,
-          GpioDirection direction) noexcept;
+  GpioPin(GPIO_TypeDef *port, uint16_t pin, GpioDirection direction) noexcept;
 
   /** @brief Drives an output pin high. @return `true` for an output pin. */
   bool set() const noexcept;

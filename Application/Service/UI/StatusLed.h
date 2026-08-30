@@ -101,16 +101,16 @@ private:
   void write(uint8_t ledIndex, bool isOn) noexcept;
 
   /** @brief Non-owning GpioPin pointers by LED index. */
-  GpioPin *const _leds[LedCount];
+  GpioPin _ledPin;
 
   /** @brief Requested logical modes by LED index. */
-  LedState _states[LedCount];
+  LedState _state;
 
   /** @brief Last requested physical levels. */
-  bool _outputStates[LedCount];
+  bool _outputState;
 
   /** @brief Blink phase anchors in milliseconds. */
-  uint32_t _lastToggleMs[LedCount];
+  uint32_t _lastToggleMs;
 };
 
 } // namespace dda

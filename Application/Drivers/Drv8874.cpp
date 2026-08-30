@@ -16,8 +16,7 @@ bool waitForDirectionDeadTime(uint32_t disabledAtTicks) noexcept {
       dda::config::DirectionDeadTimeMicroseconds *
       dda::config::Tim2TicksPerMicrosecond;
   // Bound the polling work in case TIM2 stops after the running check.
-  constexpr uint32_t maximumPolls =
-      (directionDeadTimeTicks + 1U) * 4U;
+  constexpr uint32_t maximumPolls = (directionDeadTimeTicks + 1U) * 4U;
   uint32_t polls = 0U;
   while ((TIM2->CNT - disabledAtTicks) < directionDeadTimeTicks) {
     ++polls;
@@ -40,8 +39,7 @@ Drv8874::Drv8874(GPIO_TypeDef *driveEnablePort, uint16_t driveEnablePin,
       _phase(phasePort, phasePin, GpioDirection::OUTPUT),
       _sleepControl(sleepControlPort, sleepControlPin, GpioDirection::OUTPUT),
       _fault(faultPort, faultPin, GpioDirection::INPUT), _state(State::Sleep),
-      _disabledAtTicks(0U), _disabledAtValid(false),
-      _faultLatched(false) {}
+      _disabledAtTicks(0U), _disabledAtValid(false), _faultLatched(false) {}
 
 void Drv8874::init() noexcept {
   (void)applyState(State::Sleep);

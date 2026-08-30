@@ -4,7 +4,7 @@
 
 namespace dda {
 
-StatusLeds::StatusLeds(GpioPin *led1, GpioPin *led2, GpioPin *led3) noexcept
+StatusLeds::StatusLeds(GpioPin *led) noexcept
     : _leds{led1, led2, led3},
       _states{LedState::Off, LedState::Off, LedState::Off},
       _outputStates{false, false, false}, _lastToggleMs{0U, 0U, 0U} {
@@ -13,8 +13,8 @@ StatusLeds::StatusLeds(GpioPin *led1, GpioPin *led2, GpioPin *led3) noexcept
   }
 }
 
-void StatusLeds::setState(LedIndex ledIndex, LedState newState) noexcept {
-  const uint8_t index = static_cast<uint8_t>(ledIndex);
+void StatusLeds::setState(LedState newState) noexcept {
+  const uint8_t index = static_cast<uint8_t>(led);
   if (index >= LedCount) {
     return;
   }

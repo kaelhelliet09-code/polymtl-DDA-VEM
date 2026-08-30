@@ -22,19 +22,18 @@ void DdaApplication_Process(void);
 
 #include "Drivers/Dac088s085.h"
 #include "Drivers/Ina226.h"
-#include "Service/Calibration/CalibrationStore.h"
-#include "Service/UI/Display.h"
-#include "Service/UI/StatusLed.h"
-#include "Service/UI/UserInput.h"
 #include "Platform/Stm32/Gpio/GpioPin.h"
+#include "Service/Calibration/CalibrationStore.h"
 #include "Service/Launch/LaunchManager.h"
 #include "Service/Power/CoilController.h"
 #include "Service/RequestManager/RequestManager.h"
 #include "Service/Safety/SafetyManager.h"
 #include "Service/Sensor/SensorController.h"
+#include "Service/UI/Display.h"
+#include "Service/UI/StatusLed.h"
+#include "Service/UI/UserInput.h"
 #include "Service/Usb/USBcontroller.h"
 #include <cstdint>
-
 
 namespace dda {
 
@@ -101,6 +100,7 @@ public:
    * @brief Report whether startup and current safety gates permit commands.
    * @return `true` when high-power commands are currently allowed.
    */
+  /// Ask safety manager.
   bool powerStageReadyForCommands() const noexcept;
 
   /**

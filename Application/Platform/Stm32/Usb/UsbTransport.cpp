@@ -40,8 +40,7 @@ void UsbTransport::process() noexcept {
 
 bool UsbTransport::queuePacket(const UsbPacket &packet) noexcept {
   uint8_t bytes[UsbPacket::SerializedSize]{};
-  const uint8_t length =
-      serializeUsbPacket(packet, bytes, sizeof(bytes));
+  const uint8_t length = serializeUsbPacket(packet, bytes, sizeof(bytes));
   if (length == 0U) {
     return false;
   }
@@ -87,8 +86,7 @@ uint16_t UsbTransport::receivedSize() const noexcept {
   return _receiveAccumulator.size();
 }
 
-bool UsbTransport::consumeReceived(uint8_t *output,
-                                   uint16_t length) noexcept {
+bool UsbTransport::consumeReceived(uint8_t *output, uint16_t length) noexcept {
   InterruptGuard interruptGuard;
   return _receiveAccumulator.consume(output, length);
 }
@@ -103,9 +101,7 @@ void UsbTransport::onReceive(const uint8_t *data, uint32_t length) noexcept {
   (void)_receiveAccumulator.append(data, length);
 }
 
-void UsbTransport::onTransmitComplete() noexcept {
-  _transmitCompleted = true;
-}
+void UsbTransport::onTransmitComplete() noexcept { _transmitCompleted = true; }
 
 void UsbTransport::onConnected() noexcept { _connectedEvent = true; }
 

@@ -57,15 +57,6 @@ SensorController::SensorController(Dac088s085 &dac,
   _requestManager.registerService(Service::SensorControl, *this);
 }
 
-CalibrationStoreResult SensorController::initializeCalibrationStore() noexcept {
-  return _calibrationStore.initialize();
-}
-
-HAL_StatusTypeDef SensorController::setLedCurrentCode(Sensor &sensor,
-                                                      uint8_t code) noexcept {
-  return sensor.setCurrentLedCode(_dac, code);
-}
-
 HAL_StatusTypeDef SensorController::setTripVoltageCode(Sensor &sensor,
                                                        uint8_t code) noexcept {
   return sensor.setVoltageTripCode(_dac, code);

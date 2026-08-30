@@ -6,8 +6,8 @@
 
 #pragma once
 
-#include "Platform/Stm32/Gpio/GpioPin.h"
 #include "Config/BoardConfig.h"
+#include "Platform/Stm32/Gpio/GpioPin.h"
 
 #include <cstdint>
 
@@ -95,10 +95,10 @@ private:
    * @param index Button array index in `[0, 2]`.
    * @return Logical pressed state.
    */
-  bool readPressed(uint8_t index) const noexcept;
+  bool readPressed() const noexcept;
 
-  GpioPin *const _inputs[InputCount]; ///< Non-owning button GpioPin pointers.
-  ButtonState _states[InputCount];    ///< Fixed debounce and event storage.
+  GpioPin _buttonPin;  ///< Non-owning button GpioPin pointers.
+  ButtonState _states; ///< Fixed debounce and event storage.
 };
 
 } // namespace dda

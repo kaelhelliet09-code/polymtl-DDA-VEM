@@ -108,13 +108,13 @@ private:
   bool applyState(State state) noexcept;
 
   /** @brief Non-owning wrapper for the bridge drive-enable input. */
-  GpioPin _driveEnable;
+  GpioPin _in1;
 
   /** @brief Non-owning wrapper for the bridge phase input. */
-  GpioPin _phase;
+  GpioPin _in2;
 
   /** @brief Non-owning wrapper for the active-high nSLEEP control. */
-  GpioPin _sleepControl;
+  GpioPin _sleep;
 
   /** @brief Non-owning wrapper for the active-low fault input. */
   GpioPin _fault;
@@ -124,14 +124,23 @@ private:
 
   /** @brief TIM2 count captured when the bridge most recently became disabled.
    */
+  /// What is this :
   uint32_t _disabledAtTicks;
 
+  /// What is this :
   /** @brief Whether `_disabledAtTicks` came from a running TIM2. */
   bool _disabledAtValid;
 
-  /** @brief Fault flag written by interrupt context and read in foreground. */
-  volatile bool _faultLatched;
+  uint8_t _vref; // Current Vref value.
 
+  DacChannel _channel; // I control Channel.
+
+  bool _mode; // purely a state pin not modifiable by this class
+              // (Controlled by the CoilController)
+
+  /** @brief Fault flag written by interrupt context and read in foreground.
+   */
+  volatile bool _faultLatched;
 };
 
 } // namespace dda
