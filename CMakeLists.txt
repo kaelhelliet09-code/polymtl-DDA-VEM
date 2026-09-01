@@ -88,7 +88,6 @@ list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 # Add linked libraries
 target_link_libraries(${CMAKE_PROJECT_NAME}
     dda_application
-    dda_calibration_codec
     dda_platform_stm32
     dda_usb_protocol
     stm32cubemx

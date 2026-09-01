@@ -192,6 +192,16 @@ class _CoilCommand(IntEnum):
     SET_CURRENT = 4
     GET_FAULTS = 5
     COIL_OFF = 6
+    SET_CURRENT_H1 = 7
+    SET_CURRENT_H2 = 8
+    SET_CURRENT_H3 = 9
+    SET_CURRENT_H4 = 10
+    GET_CURRENT_H1 = 11
+    GET_CURRENT_H2 = 12
+    GET_CURRENT_H3 = 13
+    GET_CURRENT_H4 = 14
+    SET_PMODE = 15
+    GET_PMODE = 16
 
 
 class _SensorCommand(IntEnum):
@@ -1350,15 +1360,53 @@ class CompetitionBoard:
     coilOff = off
     coil_off = off
 
-    def setCurrent(self, current_ma: int) -> None:
+    def setCurrent(
+        self,
+        current_ma: int,
+        bridge: Bridge | int = Bridge.ALL,
+    ) -> None:
         if not 0 <= current_ma <= 3000 or current_ma % _CURRENT_STEP_MA:
             raise ValueError("current_ma must be 0..3000 in 25 mA steps")
+        selected_bridge = Bridge(bridge)
+        command = _CoilCommand.SET_CURRENT
+        if selected_bridge is not Bridge.ALL:
+            command = _CoilCommand(
+                int(_CoilCommand.SET_CURRENT_H1) + int(selected_bridge)
+            )
         self._expect_success(
             Service.COILS,
-            _CoilCommand.SET_CURRENT,
+            command,
             current_ma // _CURRENT_STEP_MA,
             "set coil current",
         )
+
+    def getCurrent(self, bridge: Bridge | int) -> int:
+        selected_bridge = Bridge(bridge)
+        if selected_bridge is Bridge.ALL:
+            raise ValueError("getCurrent requires one bridge (H1..H4)")
+        command = _CoilCommand(
+            int(_CoilCommand.GET_CURRENT_H1) + int(selected_bridge)
+        )
+        current_units = self._request(Service.COILS, command)
+        if current_units > 3000 // _CURRENT_STEP_MA:
+            raise BoardProtocolError("invalid current-threshold response")
+        return current_units * _CURRENT_STEP_MA
+
+    def setPmode(self, pwm_mode: bool) -> None:
+        if not isinstance(pwm_mode, bool):
+            raise TypeError("pwm_mode must be a bool")
+        self._expect_success(
+            Service.COILS,
+            _CoilCommand.SET_PMODE,
+            int(pwm_mode),
+            "set PMODE",
+        )
+
+    def getPmode(self) -> bool:
+        response = self._request(Service.COILS, _CoilCommand.GET_PMODE)
+        if response not in (0, 1):
+            raise BoardProtocolError("invalid PMODE response")
+        return bool(response)
 
     def getFaults(self) -> PowerStageFault:
         faults = PowerStageFault(
@@ -1564,10 +1612,29 @@ class CompetitionBoard:
 
         return self.abortLaunch(delai_s)
 
-    def reglerCourant(self, courant_ma: int) -> None:
-        """Regle le courant des bobines en milliamperes."""
+    def reglerCourant(
+        self,
+        courant_ma: int,
+        bobine: Bobine | int = Bobine.TOUTES,
+    ) -> None:
+        """Regle le courant des bobines selectionnees en milliamperes."""
 
-        self.setCurrent(courant_ma)
+        self.setCurrent(courant_ma, bobine)
+
+    def lireCourant(self, bobine: Bobine | int) -> int:
+        """Lit le courant demande pour une bobine en milliamperes."""
+
+        return self.getCurrent(bobine)
+
+    def reglerPmode(self, mode_pwm: bool) -> None:
+        """Selectionne le mode PWM (vrai) ou PH/EN (faux)."""
+
+        self.setPmode(mode_pwm)
+
+    def lirePmode(self) -> bool:
+        """Retourne vrai lorsque les pilotes sont en mode PWM."""
+
+        return self.getPmode()
 
     def activer(
         self,
@@ -1670,6 +1737,9 @@ class CompetitionBoard:
     stop_launch = stopLaunch
     abort_launch = abortLaunch
     set_current = setCurrent
+    get_current = getCurrent
+    set_pmode = setPmode
+    get_pmode = getPmode
     get_faults = getFaults
     get_system_state = getSystemState
     start_sensor_calibration = startSensorCalibration

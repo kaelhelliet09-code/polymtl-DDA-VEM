@@ -1,70 +1,42 @@
-// Implements the board's DRV8874 PH/EN truth table, nSLEEP sequencing,
-// active-low fault checks, and the direction-change dead time.
+// Implements the DRV8874 input truth tables, per-channel VREF control, and
+// active-low fault checks.
 #include "Drivers/Drv8874.h"
 
-#include "Config/BoardConfig.h"
+#include "Config/PowerConfig.h"
 #include "Config/SafetyConfig.h"
-
-namespace {
-
-bool waitForDirectionDeadTime(uint32_t disabledAtTicks) noexcept {
-  if ((TIM2->CR1 & TIM_CR1_CEN) == 0U) {
-    return false;
-  }
-
-  constexpr uint32_t directionDeadTimeTicks =
-      dda::config::DirectionDeadTimeMicroseconds *
-      dda::config::Tim2TicksPerMicrosecond;
-  // Bound the polling work in case TIM2 stops after the running check.
-  constexpr uint32_t maximumPolls = (directionDeadTimeTicks + 1U) * 4U;
-  uint32_t polls = 0U;
-  while ((TIM2->CNT - disabledAtTicks) < directionDeadTimeTicks) {
-    ++polls;
-    if (polls >= maximumPolls) {
-      return false;
-    }
-  }
-  return true;
-}
-
-} // namespace
 
 namespace dda {
 
-Drv8874::Drv8874(GPIO_TypeDef *driveEnablePort, uint16_t driveEnablePin,
-                 GPIO_TypeDef *phasePort, uint16_t phasePin,
-                 GPIO_TypeDef *sleepControlPort, uint16_t sleepControlPin,
-                 GPIO_TypeDef *faultPort, uint16_t faultPin) noexcept
-    : _driveEnable(driveEnablePort, driveEnablePin, GpioDirection::OUTPUT),
-      _phase(phasePort, phasePin, GpioDirection::OUTPUT),
-      _sleepControl(sleepControlPort, sleepControlPin, GpioDirection::OUTPUT),
-      _fault(faultPort, faultPin, GpioDirection::INPUT), _state(State::Sleep),
-      _disabledAtTicks(0U), _disabledAtValid(false), _faultLatched(false) {}
+Drv8874::Drv8874(GPIO_TypeDef *in1Port, uint16_t in1Pin, GPIO_TypeDef *in2Port,
+                 uint16_t in2Pin, GPIO_TypeDef *sleepPort, uint16_t sleepPin,
+                 GPIO_TypeDef *faultPort, uint16_t faultPin, Dac088s085 &dac,
+                 DacChannel dacChannel) noexcept
+    : _in1(in1Port, in1Pin, GpioDirection::OUTPUT),
+      _in2(in2Port, in2Pin, GpioDirection::OUTPUT),
+      _sleep(sleepPort, sleepPin, GpioDirection::OUTPUT),
+      _fault(faultPort, faultPin, GpioDirection::INPUT), _dac(dac),
+      _dacChannel(dacChannel), _state(State::Sleep),
+      _currentThresholdMilliamps(config::DefaultCoilCurrentMilliamps),
+      _appliedCurrentThresholdMilliamps(0U), _pwmMode(true),
+      _faultLatched(false) {}
 
-void Drv8874::init() noexcept {
-  (void)applyState(State::Sleep);
+HAL_StatusTypeDef Drv8874::init() noexcept {
+  const bool sleeping = applyState(State::Sleep);
   _faultLatched = false;
+  const HAL_StatusTypeDef dacStatus = disableCurrentThresholdOutput();
+  return sleeping ? dacStatus : HAL_ERROR;
 }
 
 bool Drv8874::setState(State state) noexcept {
-  if (!isValidState(state)) {
-    return false;
-  }
-  return applyState(state);
+  return isValidState(state) && applyState(state);
 }
 
 bool Drv8874::applyState(State state) noexcept {
   if (state == State::Sleep) {
-    // nSLEEP low is the only high-impedance state in PH/EN mode.
-    const bool sleeping = _sleepControl.reset();
-    const bool driveDisabled = _driveEnable.reset();
-    const bool phaseLow = _phase.reset();
-    if (sleeping && driveDisabled && phaseLow) {
-      _state = state;
-      _disabledAtValid = (TIM2->CR1 & TIM_CR1_CEN) != 0U;
-      if (_disabledAtValid) {
-        _disabledAtTicks = TIM2->CNT;
-      }
+    const bool inputsLow = _in1.reset() && _in2.reset();
+    const bool sleeping = _sleep.reset();
+    if (inputsLow && sleeping) {
+      _state = State::Sleep;
       return true;
     }
     return false;
@@ -74,50 +46,40 @@ bool Drv8874::applyState(State state) noexcept {
     return false;
   }
 
-  // Remove drive through EN before changing PH. Keep nSLEEP high when moving
-  // between active states so an ordinary state change does not restart tWAKE.
+  // IN1=IN2=0 is the non-driving coast state in PWM mode. Apply it before
+  // changing the awake-state truth-table inputs.
   if (_state != State::Sleep) {
-    if (!_driveEnable.reset()) {
+    if (!_in1.reset() || !_in2.reset()) {
       return false;
     }
     _state = State::CoilOff;
-    _disabledAtValid = (TIM2->CR1 & TIM_CR1_CEN) != 0U;
-    if (_disabledAtValid) {
-      _disabledAtTicks = TIM2->CNT;
-    }
-  }
-
-  if (!_disabledAtValid || !waitForDirectionDeadTime(_disabledAtTicks)) {
-    (void)_sleepControl.reset();
-    (void)_driveEnable.reset();
-    (void)_phase.reset();
-    _state = State::Sleep;
-    return false;
   }
 
   bool inputsValid = false;
   switch (state) {
   case State::CoilOff:
-  case State::SlowDecay:
-    // EN low commands brake/low-side slow decay; PH is don't-care.
-    inputsValid = _driveEnable.reset() && _phase.reset();
+    inputsValid = _in1.reset() && _in2.reset();
     break;
   case State::Forward:
-    inputsValid = _phase.set() && _driveEnable.set();
+    inputsValid =
+        _pwmMode ? (_in2.reset() && _in1.set()) : (_in2.set() && _in1.set());
     break;
   case State::Reverse:
-    inputsValid = _phase.reset() && _driveEnable.set();
+    inputsValid =
+        _pwmMode ? (_in1.reset() && _in2.set()) : (_in2.reset() && _in1.set());
+    break;
+  case State::SlowDecay:
+    inputsValid =
+        _pwmMode ? (_in1.set() && _in2.set()) : (_in1.reset() && _in2.reset());
     break;
   case State::Sleep:
     break;
   }
 
-  // Recheck immediately before leaving sleep. For an already-awake driver,
-  // nSLEEP remains high and this write simply preserves that state.
-  if (!inputsValid || !faultInputReleased() || !_sleepControl.set()) {
-    (void)_sleepControl.reset();
-    (void)_driveEnable.reset();
-    (void)_phase.reset();
+  if (!inputsValid || !faultInputReleased() || !_sleep.set()) {
+    (void)_in1.reset();
+    (void)_in2.reset();
+    (void)_sleep.reset();
     _state = State::Sleep;
     return false;
   }
@@ -128,9 +90,63 @@ bool Drv8874::applyState(State state) noexcept {
 
 Drv8874::State Drv8874::state() const noexcept { return _state; }
 
+bool Drv8874::setPwmMode(bool pwmMode) noexcept {
+  if (_state != State::Sleep) {
+    return false;
+  }
+  _pwmMode = pwmMode;
+  return true;
+}
+
+bool Drv8874::pwmMode() const noexcept { return _pwmMode; }
+
+HAL_StatusTypeDef
+Drv8874::setCurrentThresholdMilliamps(uint16_t currentMilliamps) noexcept {
+  if (currentMilliamps > config::MaximumCoilCurrentMilliamps) {
+    return HAL_ERROR;
+  }
+  if (_state == State::Sleep) {
+    _currentThresholdMilliamps = currentMilliamps;
+    return HAL_OK;
+  }
+  const HAL_StatusTypeDef status = writeCurrentThreshold(currentMilliamps);
+  if (status == HAL_OK) {
+    _currentThresholdMilliamps = currentMilliamps;
+  }
+  return status;
+}
+
+HAL_StatusTypeDef Drv8874::applyCurrentThreshold() noexcept {
+  return writeCurrentThreshold(_currentThresholdMilliamps);
+}
+
+HAL_StatusTypeDef Drv8874::disableCurrentThresholdOutput() noexcept {
+  return writeCurrentThreshold(config::SafeStartupCurrentMilliamps);
+}
+
+HAL_StatusTypeDef
+Drv8874::writeCurrentThreshold(uint16_t currentMilliamps) noexcept {
+  const HAL_StatusTypeDef status = _dac.write(
+      _dacChannel, config::currentMilliampsToReferenceCode(currentMilliamps),
+      config::DriverDacTimeoutMilliseconds);
+  if (status == HAL_OK) {
+    _appliedCurrentThresholdMilliamps = currentMilliamps;
+  }
+  return status;
+}
+
+uint16_t Drv8874::currentThresholdMilliamps() const noexcept {
+  return _currentThresholdMilliamps;
+}
+
+uint16_t Drv8874::appliedCurrentThresholdMilliamps() const noexcept {
+  return _appliedCurrentThresholdMilliamps;
+}
+
+DacChannel Drv8874::dacChannel() const noexcept { return _dacChannel; }
+
 bool Drv8874::hasFault() const noexcept {
   bool faultPinHigh = true;
-  // Treat an unreadable active-low safety input as a fault.
   return _faultLatched || !_fault.read(faultPinHigh) || !faultPinHigh;
 }
 

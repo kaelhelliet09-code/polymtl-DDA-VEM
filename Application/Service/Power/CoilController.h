@@ -1,16 +1,16 @@
 /**
  * @file CoilController.h
  * @brief Declares coordinated bridge-state and current-reference control.
- * @details Coordinates four drivers, two shared VREF DAC channels, blocking
- * wake qualification, live fault sampling, immediate shutdown, and reporting
- * faults to SafetyManager.
+ * @details Coordinates four drivers, four external-DAC VREF channels, shared
+ * PMODE, wake qualification, live fault sampling, and immediate shutdown.
  */
 
 #pragma once
 
 #include "Config/BoardConfig.h"
+#include "Drivers/Dac088s085.h"
 #include "Drivers/Drv8874.h"
-#include "Platform/Stm32/Analog/InternalDacChannel.h"
+#include "Platform/Stm32/Gpio/GpioPin.h"
 #include "Service/Safety/SafetyManager.h"
 
 #include <cstdint>
@@ -26,22 +26,23 @@ enum class Driver : uint8_t {
 };
 
 /**
- * @brief Owns four bridge drivers and their two shared current-reference DACs.
- * @note Bridges H1/H2 share DAC channel 1 and H3/H4 share DAC channel 2.
- * Current-reference codes use the configured RPROPI and nominal AIPROPI
- * transfer.
+ * @brief Owns four bridge drivers and the shared DRV configuration GPIO.
+ * @note Each bridge has an independent DAC088S085 VREF channel.
  */
 class CoilController {
 public:
   /**
    * @brief Binds the controller to the board's fixed GpioPin and DAC resources.
+   * @param safetyManager Shared fault-policy service.
+   * @param dac Shared external DAC that owns all four VREF outputs.
+   * @param pmode Shared DRV8874 PMODE output.
    */
-  explicit CoilController(SafetyManager &safetyManager) noexcept;
+  CoilController(SafetyManager &safetyManager, Dac088s085 &dac,
+                 GpioPin &pmode) noexcept;
 
   /**
-   * @brief Disables every bridge, zeros both references, and starts both DACs.
-   * @return `HAL_OK` on success or the first DAC HAL error.
-   * @note If the second DAC cannot start, the first DAC is stopped.
+   * @brief Disables every bridge, selects PWM mode, and zeros all four VREFs.
+   * @return `HAL_OK` on success or the first GPIO/DAC error.
    */
   HAL_StatusTypeDef init() noexcept;
 
@@ -64,6 +65,7 @@ public:
    */
   bool setDriverState(Driver driver, Drv8874::State state) noexcept;
 
+  /** @brief Process one routed coil request. @param request Request to handle. */
   void processRequest(Request &request) noexcept;
   /**
    * @brief Returns the last commanded state for one bridge.
@@ -73,12 +75,22 @@ public:
   Drv8874::State driverState(Driver driver) const noexcept;
 
   /**
-   * @brief Changes the production current setpoint without energizing hardware.
+   * @brief Changes all four retained current setpoints.
    * @param currentMilliamps Requested setpoint in the inclusive range 0..3000.
-   * @return `true` only while all bridges and current references are off and no
-   * live or latched fault is present.
+   * @return `true` when every bridge accepted the value and no blocking fault
+   * is present. Awake bridges update VREF immediately; sleeping bridges retain
+   * the value while their VREF remains zero.
    */
   bool setRequestedCurrentMilliamps(uint16_t currentMilliamps) noexcept;
+
+  /**
+   * @brief Change one bridge's current threshold, including while it is active.
+   * @param driver Bridge H1 through H4.
+   * @param currentMilliamps Threshold from 0 through 3000 mA in protocol use.
+   * @return `true` when the value was retained and, if awake, VREF updated.
+   */
+  bool setCurrentThresholdMilliamps(Driver driver,
+                                    uint16_t currentMilliamps) noexcept;
 
   /**
    * @brief Returns the retained production current setpoint.
@@ -87,13 +99,43 @@ public:
   uint16_t requestedCurrentMilliamps() const noexcept;
 
   /**
-   * @brief Returns the current reference most recently applied to both DACs.
-   * @return Applied current in milliamperes.
+   * @brief Return one bridge's retained current threshold.
+   * @param driver Bridge H1 through H4.
+   * @return Configured threshold, or zero for an invalid index.
+   */
+  uint16_t currentThresholdMilliamps(Driver driver) const noexcept;
+
+  /**
+   * @brief Returns the greatest current reference applied to any bridge.
+   * @return Maximum applied current in milliamperes.
    */
   uint16_t appliedCurrentMilliamps() const noexcept;
 
   /**
-   * @brief Wakes one driver in the non-driving PH/EN brake state.
+   * @brief Return one bridge's currently applied VREF threshold.
+   * @param driver Bridge H1 through H4.
+   * @return Applied threshold, or zero for an invalid index.
+   */
+  uint16_t appliedCurrentMilliamps(Driver driver) const noexcept;
+
+  /**
+   * @brief Report whether all four external-DAC VREF outputs are zero.
+   * @return Whether every cached applied threshold is zero.
+   */
+  bool allCurrentThresholdOutputsDisabled() const noexcept;
+
+  /**
+   * @brief Change the shared PMODE level after all drivers enter sleep.
+   * @param pwmMode `true` for PWM mode, `false` for PH/EN mode.
+   * @return `false` unless every bridge is asleep and VREF is zero.
+   */
+  bool setPmode(bool pwmMode) noexcept;
+
+  /** @brief Return the cached shared PMODE level. @return `true` for PWM. */
+  bool pmode() const noexcept;
+
+  /**
+   * @brief Wakes one driver in the active mode's non-driving state.
    * @param driver Bridge selected for a subsequent command.
    * @return `true` when nSLEEP was raised and its blocking wake delay elapsed.
    * @note A short nFAULT assertion is recorded but not classified until
@@ -211,8 +253,11 @@ private:
   /** @brief Number of coil bridges present on the board. */
   static constexpr uint8_t DriverCount = config::DriverCount;
 
-  /** @brief Applies a hardware reference without changing the request. */
-  HAL_StatusTypeDef applyCurrentMilliamps(uint16_t currentMilliamps) noexcept;
+  /** @brief Apply one retained hardware reference before energizing. */
+  HAL_StatusTypeDef applyCurrentThreshold(uint8_t index) noexcept;
+
+  /** @brief Zero every bridge VREF without changing retained thresholds. */
+  HAL_StatusTypeDef disableCurrentThresholdOutputs() noexcept;
 
   /** @brief Forces every cached bridge state to Sleep. */
   bool disableDriverGpios() noexcept;
@@ -233,7 +278,7 @@ private:
   /** Immediately isolates and reports one driver fault. */
   void latchDriverFault(Driver driver) noexcept;
 
-  /** Immediately clears all four EN outputs with one register write. */
+  /** Immediately clears all four nSLEEP outputs through their GPIO banks. */
   static void forceBridgeEnablesLow() noexcept;
 
   /** Reports an unrecoverable failure to complete full safe state. */
@@ -242,17 +287,11 @@ private:
   /** @brief Bridge interfaces indexed by @ref Driver. */
   Drv8874 _drivers[DriverCount];
 
-  /** @brief Current-reference DAC shared by bridges H1 and H2. */
-  InternalDacChannel _currentControlH12;
+  /** @brief Non-owning shared PMODE GPIO output. */
+  GpioPin &_pmode;
 
-  /** @brief Current-reference DAC shared by bridges H3 and H4. */
-  InternalDacChannel _currentControlH34;
-
-  /** @brief Retained production current requested by the host. */
-  uint16_t _requestedCurrentMilliamps;
-
-  /** @brief Current reference most recently written to both DACs. */
-  uint16_t _appliedCurrentMilliamps;
+  /** @brief Cached shared PMODE level used by every Drv8874. */
+  bool _pwmMode;
 
   /** Board-wide safety service receiving fault reports. */
   SafetyManager &_safetyManager;

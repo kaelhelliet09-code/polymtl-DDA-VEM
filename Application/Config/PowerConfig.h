@@ -16,6 +16,7 @@
 #pragma once
 
 #include "Config/BoardConfig.h"
+#include "Config/ExternalDacConfig.h"
 
 #include <cstdint>
 
@@ -31,14 +32,14 @@ inline constexpr uint32_t PowerAlertThresholdMilliwatts = 120000U;
 
 /** @brief INA226 bus/shunt averaging choices encoded for register 0x00. */
 enum class Ina226Averaging : uint16_t {
-  Samples1 = 0x0000U,
-  Samples4 = 0x0200U,
-  Samples16 = 0x0400U,
-  Samples64 = 0x0600U,
-  Samples128 = 0x0800U,
-  Samples256 = 0x0A00U,
-  Samples512 = 0x0C00U,
-  Samples1024 = 0x0E00U,
+  Samples1 = 0x0000U,    ///< No averaging.
+  Samples4 = 0x0200U,    ///< Average four conversions.
+  Samples16 = 0x0400U,   ///< Average sixteen conversions.
+  Samples64 = 0x0600U,   ///< Average sixty-four conversions.
+  Samples128 = 0x0800U,  ///< Average 128 conversions.
+  Samples256 = 0x0A00U,  ///< Average 256 conversions.
+  Samples512 = 0x0C00U,  ///< Average 512 conversions.
+  Samples1024 = 0x0E00U, ///< Average 1024 conversions.
 };
 
 inline constexpr Ina226Averaging Ina226AveragingSetting =
@@ -53,6 +54,19 @@ inline constexpr uint16_t MaximumCoilCurrentMilliamps = 3000U;
 ///< Per-coil command limit enforced by every current-setting path.
 inline constexpr uint16_t DefaultCoilCurrentMilliamps = 1000U;
 ///< Retained boot setpoint; hardware VREF remains zero until a drive succeeds.
+
+/** @brief Foreground SPI timeout for a DRV8874 current-limit update. */
+inline constexpr uint32_t DriverDacTimeoutMilliseconds =
+    PeripheralOperationTimeoutMilliseconds;
+
+/**
+ * @brief Delay used before changing the shared PMODE level.
+ *
+ * DRV8874 latches PMODE when nSLEEP rises. The datasheet requires every
+ * device to reach sleep (tSLEEP) before PMODE changes; one millisecond is a
+ * deliberately conservative foreground-only interval.
+ */
+inline constexpr uint32_t PmodeRelatchDelayMilliseconds = 1U;
 
 namespace detail {
 
@@ -106,14 +120,14 @@ currentMilliampsToAdcCodeFloor(uint32_t currentMilliamps) noexcept {
 /**
  * @brief Convert a requested coil current to the nearest VREF DAC code.
  * @param currentMilliamps Individual-coil current in milliamperes.
- * @return Nearest 12-bit DAC code using RPROPI and nominal AIPROPI.
+ * @return Nearest 8-bit DAC088S085 code using RPROPI and nominal AIPROPI.
  * @note This assumes DAC VREF drives the DRV8874 VREF input without additional
  * gain or attenuation.
  */
-constexpr uint16_t
+constexpr uint8_t
 currentMilliampsToReferenceCode(uint32_t currentMilliamps) noexcept {
-  return static_cast<uint16_t>(
-      (detail::currentCodeNumerator(currentMilliamps, InternalDacMaximumCode) +
+  return static_cast<uint8_t>(
+      (detail::currentCodeNumerator(currentMilliamps, ExternalDacMaximumCode) +
        (detail::CurrentCodeDenominator / 2ULL)) /
       detail::CurrentCodeDenominator);
 }
@@ -136,7 +150,9 @@ static_assert(MaximumCoilCurrentMilliamps <=
                   MaximumRpropiMeasurableCurrentMilliamps,
               "The coil limit exceeds the IPROPI ADC range");
 static_assert(currentMilliampsToReferenceCode(MaximumCoilCurrentMilliamps) <=
-                  InternalDacMaximumCode,
+                  ExternalDacMaximumCode,
               "The coil limit exceeds the VREF DAC range");
+static_assert(PmodeRelatchDelayMilliseconds > 0U,
+              "PMODE changes must allow every DRV8874 to enter sleep");
 
 } // namespace dda::config

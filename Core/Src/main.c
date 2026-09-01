@@ -44,13 +44,9 @@
 ADC_HandleTypeDef hadc1;
 DMA_HandleTypeDef hdma_adc1;
 
-DAC_HandleTypeDef hdac1;
-
 I2C_HandleTypeDef hi2c1;
 DMA_HandleTypeDef hdma_i2c1_rx;
 DMA_HandleTypeDef hdma_i2c1_tx;
-
-SPI_HandleTypeDef hspi1;
 
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
@@ -69,9 +65,7 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_ADC1_Init(void);
-static void MX_DAC1_Init(void);
 static void MX_I2C1_Init(void);
-static void MX_SPI1_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_TIM16_Init(void);
@@ -120,9 +114,7 @@ int main(void) {
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_ADC1_Init();
-  MX_DAC1_Init();
   MX_I2C1_Init();
-  MX_SPI1_Init();
   MX_TIM2_Init();
   MX_TIM3_Init();
   MX_USB_Device_Init();
@@ -210,8 +202,8 @@ static void MX_ADC1_Init(void) {
   ADC_ChannelConfTypeDef sConfig = {0};
 
   /* USER CODE BEGIN ADC1_Init 1 */
-  // Channels 3, 8, 15, and 18 sample the four bridge-current monitors as
-  // unsigned 12-bit codes. The 79.5-cycle hardware sample interval lets the
+  // Channels 0, 4, 11, and 18 sample the four bridge-current monitors as
+  // unsigned 8-bit codes. The 79.5-cycle hardware sample interval lets the
   // DRV8874 IPROPI outputs settle after a bridge is enabled.
   /* USER CODE END ADC1_Init 1 */
 
@@ -242,7 +234,7 @@ static void MX_ADC1_Init(void) {
 
   /** Configure Regular Channel
    */
-  sConfig.Channel = ADC_CHANNEL_3;
+  sConfig.Channel = ADC_CHANNEL_0;
   sConfig.Rank = ADC_RANK_CHANNEL_NUMBER;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK) {
     Error_Handler();
@@ -250,14 +242,14 @@ static void MX_ADC1_Init(void) {
 
   /** Configure Regular Channel
    */
-  sConfig.Channel = ADC_CHANNEL_8;
+  sConfig.Channel = ADC_CHANNEL_4;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK) {
     Error_Handler();
   }
 
   /** Configure Regular Channel
    */
-  sConfig.Channel = ADC_CHANNEL_15;
+  sConfig.Channel = ADC_CHANNEL_11;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK) {
     Error_Handler();
   }
@@ -271,52 +263,6 @@ static void MX_ADC1_Init(void) {
   /* USER CODE BEGIN ADC1_Init 2 */
 
   /* USER CODE END ADC1_Init 2 */
-}
-
-/**
- * @brief DAC1 Initialization Function
- * @param None
- * @retval None
- */
-static void MX_DAC1_Init(void) {
-
-  /* USER CODE BEGIN DAC1_Init 0 */
-
-  /* USER CODE END DAC1_Init 0 */
-
-  DAC_ChannelConfTypeDef sConfig = {0};
-
-  /* USER CODE BEGIN DAC1_Init 1 */
-  // Both buffered DAC outputs directly drive the two bridge-current controls;
-  // conversion codes are referenced to the board's analog supply.
-  /* USER CODE END DAC1_Init 1 */
-
-  /** DAC Initialization
-   */
-  hdac1.Instance = DAC1;
-  if (HAL_DAC_Init(&hdac1) != HAL_OK) {
-    Error_Handler();
-  }
-
-  /** DAC channel OUT1 config
-   */
-  sConfig.DAC_SampleAndHold = DAC_SAMPLEANDHOLD_DISABLE;
-  sConfig.DAC_Trigger = DAC_TRIGGER_NONE;
-  sConfig.DAC_OutputBuffer = DAC_OUTPUTBUFFER_ENABLE;
-  sConfig.DAC_ConnectOnChipPeripheral = DAC_CHIPCONNECT_DISABLE;
-  sConfig.DAC_UserTrimming = DAC_TRIMMING_FACTORY;
-  if (HAL_DAC_ConfigChannel(&hdac1, &sConfig, DAC_CHANNEL_1) != HAL_OK) {
-    Error_Handler();
-  }
-
-  /** DAC channel OUT2 config
-   */
-  if (HAL_DAC_ConfigChannel(&hdac1, &sConfig, DAC_CHANNEL_2) != HAL_OK) {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN DAC1_Init 2 */
-
-  /* USER CODE END DAC1_Init 2 */
 }
 
 /**
@@ -361,44 +307,6 @@ static void MX_I2C1_Init(void) {
   /* USER CODE BEGIN I2C1_Init 2 */
 
   /* USER CODE END I2C1_Init 2 */
-}
-
-/**
- * @brief SPI1 Initialization Function
- * @param None
- * @retval None
- */
-static void MX_SPI1_Init(void) {
-
-  /* USER CODE BEGIN SPI1_Init 0 */
-
-  /* USER CODE END SPI1_Init 0 */
-
-  /* USER CODE BEGIN SPI1_Init 1 */
-  // SPI1 is a transmit-only 16-bit bus at 4 Mbit/s. Chip select is driven as a
-  // separate GPIO so a complete external-DAC frame can be bracketed manually.
-  /* USER CODE END SPI1_Init 1 */
-  /* SPI1 parameter configuration*/
-  hspi1.Instance = SPI1;
-  hspi1.Init.Mode = SPI_MODE_MASTER;
-  hspi1.Init.Direction = SPI_DIRECTION_1LINE;
-  hspi1.Init.DataSize = SPI_DATASIZE_16BIT;
-  hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
-  hspi1.Init.CLKPhase = SPI_PHASE_2EDGE;
-  hspi1.Init.NSS = SPI_NSS_SOFT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;
-  hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
-  hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
-  hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
-  hspi1.Init.CRCPolynomial = 7;
-  hspi1.Init.CRCLength = SPI_CRC_LENGTH_DATASIZE;
-  hspi1.Init.NSSPMode = SPI_NSS_PULSE_DISABLE;
-  if (HAL_SPI_Init(&hspi1) != HAL_OK) {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN SPI1_Init 2 */
-
-  /* USER CODE END SPI1_Init 2 */
 }
 
 /**
@@ -700,8 +608,8 @@ static void MX_GPIO_Init(void) {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
   /* USER CODE BEGIN MX_GPIO_Init_1 */
   // Output data registers are loaded with safe levels before pins switch to
-  // output mode: every H-bridge control stays low and SPI chip select stays
-  // high.
+  // output mode: every H-bridge control and sensor enable stays low, while
+  // PMODE and DAC_SYNC stay high.
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
@@ -712,27 +620,34 @@ static void MX_GPIO_Init(void) {
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC,
-                    SLEEP_H4_Pin | SLEEP_H3_Pin | SLEEP_H1_Pin | SLEEP_H2_Pin,
+  HAL_GPIO_WritePin(GPIOC, SENSOR_ENA_Pin | SLEEP_H1_Pin | SLEEP_H2_Pin,
                     GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, IN1_H1_Pin | IN2_H1_Pin | IN1_H2_Pin | IN2_H2_Pin,
+  HAL_GPIO_WritePin(PMODE_GPIO_Port, PMODE_Pin, GPIO_PIN_SET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOA, IN2_H1_Pin | IN1_H1_Pin | IN2_H2_Pin | IN1_H2_Pin,
                     GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB,
-                    IN2_H3_Pin | IN1_H3_Pin | IN2_H4_Pin | IN1_H4_Pin |
-                        STATUS_LED_1_Pin | STATUS_LED_2_Pin | STATUS_LED_3_Pin,
+                    IN2_H3_Pin | IN1_H3_Pin | DAC_SCLK_Pin | IN2_H4_Pin |
+                        IN1_H4_Pin |
+                        SLEEP_H3_Pin | SLEEP_H4_Pin | STATUS_LED_1_Pin,
                     GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(SPI1_CS_1_GPIO_Port, SPI1_CS_1_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(DAC_DIN_GPIO_Port, DAC_DIN_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : POWER_ALERT_Pin FAULT_H2_Pin */
-  GPIO_InitStruct.Pin = POWER_ALERT_Pin | FAULT_H2_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(DAC_SYNC_GPIO_Port, DAC_SYNC_Pin, GPIO_PIN_SET);
+
+  /*Configure GPIO pins : SENSOR_ENA_Pin PMODE_Pin */
+  GPIO_InitStruct.Pin = SENSOR_ENA_Pin | PMODE_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*Configure GPIO pins : SENSOR_1_Pin SENSOR_2_Pin */
@@ -741,26 +656,25 @@ static void MX_GPIO_Init(void) {
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : SLEEP_H4_Pin SLEEP_H3_Pin SLEEP_H1_Pin SLEEP_H2_Pin */
-  GPIO_InitStruct.Pin =
-      SLEEP_H4_Pin | SLEEP_H3_Pin | SLEEP_H1_Pin | SLEEP_H2_Pin;
+  /*Configure GPIO pins : SLEEP_H1_Pin SLEEP_H2_Pin */
+  GPIO_InitStruct.Pin = SLEEP_H1_Pin | SLEEP_H2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : IN1_H1_Pin IN2_H1_Pin IN1_H2_Pin IN2_H2_Pin */
-  GPIO_InitStruct.Pin = IN1_H1_Pin | IN2_H1_Pin | IN1_H2_Pin | IN2_H2_Pin;
+  /*Configure GPIO pins : FAULT_H1_Pin FAULT_H2_Pin */
+  GPIO_InitStruct.Pin = FAULT_H1_Pin | FAULT_H2_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : IN2_H1_Pin IN1_H1_Pin IN2_H2_Pin IN1_H2_Pin */
+  GPIO_InitStruct.Pin = IN2_H1_Pin | IN1_H1_Pin | IN2_H2_Pin | IN1_H2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : FAULT_H1_Pin */
-  GPIO_InitStruct.Pin = FAULT_H1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(FAULT_H1_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : FAULT_H3_Pin FAULT_H4_Pin */
   GPIO_InitStruct.Pin = FAULT_H3_Pin | FAULT_H4_Pin;
@@ -768,12 +682,20 @@ static void MX_GPIO_Init(void) {
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : IN2_H3_Pin IN1_H3_Pin IN2_H4_Pin IN1_H4_Pin
-                           STATUS_LED_1_Pin STATUS_LED_2_Pin STATUS_LED_3_Pin */
-  GPIO_InitStruct.Pin = IN2_H3_Pin | IN1_H3_Pin | IN2_H4_Pin | IN1_H4_Pin |
-                        STATUS_LED_1_Pin | STATUS_LED_2_Pin | STATUS_LED_3_Pin;
+  /*Configure GPIO pins : IN2_H3_Pin IN1_H3_Pin DAC_SCLK_Pin IN2_H4_Pin
+                           IN1_H4_Pin STATUS_LED_1_Pin */
+  GPIO_InitStruct.Pin =
+      IN2_H3_Pin | IN1_H3_Pin | DAC_SCLK_Pin | IN2_H4_Pin | IN1_H4_Pin |
+      STATUS_LED_1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : SLEEP_H3_Pin SLEEP_H4_Pin */
+  GPIO_InitStruct.Pin = SLEEP_H3_Pin | SLEEP_H4_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
@@ -781,7 +703,7 @@ static void MX_GPIO_Init(void) {
   GPIO_InitStruct.Pin = SENSOR_3_Pin | SENSOR_4_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pin : USB_VSENSE_Pin */
   GPIO_InitStruct.Pin = USB_VSENSE_Pin;
@@ -789,18 +711,24 @@ static void MX_GPIO_Init(void) {
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(USB_VSENSE_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : USER_IN1_Pin USER_IN2_Pin USER_IN3_Pin */
-  GPIO_InitStruct.Pin = USER_IN1_Pin | USER_IN2_Pin | USER_IN3_Pin;
+  /*Configure GPIO pin : USER_IN1_Pin */
+  GPIO_InitStruct.Pin = USER_IN1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
-  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+  HAL_GPIO_Init(USER_IN1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : SPI1_CS_1_Pin */
-  GPIO_InitStruct.Pin = SPI1_CS_1_Pin;
+  /*Configure GPIO pins : DAC_DIN_Pin DAC_SYNC_Pin */
+  GPIO_InitStruct.Pin = DAC_DIN_Pin | DAC_SYNC_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(SPI1_CS_1_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : POWER_ALERT_Pin */
+  GPIO_InitStruct.Pin = POWER_ALERT_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(POWER_ALERT_GPIO_Port, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 

@@ -1,23 +1,18 @@
-// Implements the board composition root, ordered startup, cooperative service
-// loop, and guarded transitions into and out of the latched safe state.
+// Implements ordered board startup, cooperative dispatch, and safe-state
+// transitions for the revised DDA hardware.
 #include "App/BoardApplication.h"
 
 #include "Config/BoardConfig.h"
 #include "Config/PowerConfig.h"
 #include "Config/SafetyConfig.h"
-#include "Drivers/Drv8874.h"
 #include "Platform/Stm32/System/InterruptEvents.h"
 #include "Platform/Stm32/System/Timestamp.h"
 #include "Platform/Stm32/Usb/UsbCdcBridge.h"
-#include "Service/Power/CoilController.h"
-#include "Service/Sensor/SensorController.h"
-#include "Service/UI/UserInput.h"
 
 extern "C" {
 #include "main.h"
 
 extern I2C_HandleTypeDef hi2c1;
-extern SPI_HandleTypeDef hspi1;
 extern ADC_HandleTypeDef hadc1;
 extern TIM_HandleTypeDef htim4;
 extern TIM_HandleTypeDef htim7;
@@ -27,15 +22,21 @@ extern TIM_HandleTypeDef htim15;
 namespace dda {
 
 BoardApplication::BoardApplication() noexcept
-    : _led1(STATUS_LED_1_GPIO_Port, STATUS_LED_1_Pin, GpioDirection::OUTPUT),
-      _externalDacChipSelect(SPI1_CS_1_GPIO_Port, SPI1_CS_1_Pin,
-                             GpioDirection::OUTPUT),
+    : _statusLedPin(STATUS_LED_1_GPIO_Port, STATUS_LED_1_Pin,
+                    GpioDirection::OUTPUT),
+      _externalDacData(DAC_DIN_GPIO_Port, DAC_DIN_Pin, GpioDirection::OUTPUT),
+      _externalDacSync(DAC_SYNC_GPIO_Port, DAC_SYNC_Pin, GpioDirection::OUTPUT),
+      _externalDacClock(DAC_SCLK_GPIO_Port, DAC_SCLK_Pin,
+                        GpioDirection::OUTPUT),
       _powerAlert(POWER_ALERT_GPIO_Port, POWER_ALERT_Pin, GpioDirection::INPUT),
-      _userInput(_userInput1), _statusLeds(&_led1),
-      _externalDac(hspi1, _externalDacChipSelect), _requestManager{},
-      _sensorController(_externalDac, _calibrationStore, _requestManager),
+      _userButton(USER_IN1_GPIO_Port, USER_IN1_Pin, GpioDirection::INPUT),
+      _pmode(PMODE_GPIO_Port, PMODE_Pin, GpioDirection::OUTPUT),
+      _userInput(_userButton), _statusLed(_statusLedPin),
+      _externalDac(_externalDacData, _externalDacSync, _externalDacClock),
+      _requestManager{},
+      _sensorController(_externalDac, _requestManager),
       _safetyManager(_requestManager, _powerAlert),
-      _coilController(_safetyManager),
+      _coilController(_safetyManager, _externalDac, _pmode),
       _powerMonitor(
           hi2c1,
           static_cast<float>(config::ShuntResistanceMicroOhms) / 1'000'000.0F,
@@ -53,14 +54,23 @@ HAL_StatusTypeDef BoardApplication::init() noexcept {
   _initializationFailure = BoardInitializationFailure::None;
   _initialized = false;
   _safetyManager.resetForInitialization();
-
-  _statusLeds.setState(LedIndex::LED1, LedState::Off);
-  _statusLeds.setState(LedIndex::LED2, LedState::Off);
-  _statusLeds.setState(LedIndex::LED3, LedState::Off);
+  _statusLed.setFaultLatched(false);
 
   HAL_StatusTypeDef firstFailure = timestamp.start();
   if (firstFailure != HAL_OK) {
     _initializationFailure = BoardInitializationFailure::Timestamp;
+  }
+
+  HAL_StatusTypeDef externalDacStatus =
+      _externalDac.init(config::PeripheralOperationTimeoutMilliseconds);
+  if (externalDacStatus == HAL_OK) {
+    externalDacStatus =
+        _externalDac.writeAll(config::SafeStartupDacCode,
+                              config::PeripheralOperationTimeoutMilliseconds);
+  }
+  if ((firstFailure == HAL_OK) && (externalDacStatus != HAL_OK)) {
+    firstFailure = externalDacStatus;
+    _initializationFailure = BoardInitializationFailure::ExternalDac;
   }
 
   const HAL_StatusTypeDef coilStatus = _coilController.init();
@@ -69,18 +79,12 @@ HAL_StatusTypeDef BoardApplication::init() noexcept {
     _initializationFailure = BoardInitializationFailure::CoilController;
   }
 
-  HAL_StatusTypeDef externalDacStatus =
-      _externalDac.init(config::PeripheralOperationTimeoutMilliseconds);
-  if (externalDacStatus == HAL_OK) {
-    externalDacStatus = _sensorController.clearSensorDacOutputs();
-  }
-  if ((firstFailure == HAL_OK) && (externalDacStatus != HAL_OK)) {
-    firstFailure = externalDacStatus;
+  const HAL_StatusTypeDef sensorStatus =
+      _sensorController.clearSensorDacOutputs();
+  if ((firstFailure == HAL_OK) && (sensorStatus != HAL_OK)) {
+    firstFailure = sensorStatus;
     _initializationFailure = BoardInitializationFailure::ExternalDac;
   }
-
-  // Storage state is diagnostic and may legitimately be empty or read-only.
-  (void)_sensorController.initializeCalibrationStore();
 
   const HAL_StatusTypeDef monitorStatus = _powerMonitor.init();
   HAL_StatusTypeDef alertStatus = monitorStatus;
@@ -112,14 +116,11 @@ HAL_StatusTypeDef BoardApplication::init() noexcept {
     _initializationFailure = BoardInitializationFailure::SafeState;
   }
 
-  (void)_display.initAutoDetect();
   _initialized = firstFailure == HAL_OK;
   _safetyManager.setSystemReady(_initialized);
-
   _usbController.init();
   bindUsbTransport(_usbController.transport());
 
-  // Publish process-lifetime targets before enabling any application IRQ.
   initializeInterruptEvents(_sensorController);
   {
     auto criticalSection = _safetyManager.enterCriticalSection();
@@ -127,9 +128,6 @@ HAL_StatusTypeDef BoardApplication::init() noexcept {
     HAL_NVIC_ClearPendingIRQ(EXTI2_3_IRQn);
     HAL_NVIC_ClearPendingIRQ(EXTI4_15_IRQn);
 
-    // Input edges can occur while the shared NVIC vectors are intentionally
-    // deferred. Acknowledge only the edge flags actually captured; a later
-    // hardware edge must remain pending for delivery after NVIC enable.
     const uint32_t capturedSafetyEdges =
         CoilController::latchPendingSafetyEdges();
     constexpr uint32_t sensorEdgeMask =
@@ -144,10 +142,12 @@ HAL_StatusTypeDef BoardApplication::init() noexcept {
     }
     enableSafetyInterrupts();
   }
+  updateFaultIndicator();
   return firstFailure;
 }
 
-HAL_StatusTypeDef BoardApplication::enterSafeState(bool turnLedsOff) noexcept {
+HAL_StatusTypeDef
+BoardApplication::enterSafeState(bool updateFaultIndicator) noexcept {
   _launchManager.abortForSafety();
   HAL_StatusTypeDef firstFailure = _coilController.disableAll();
 
@@ -162,17 +162,13 @@ HAL_StatusTypeDef BoardApplication::enterSafeState(bool turnLedsOff) noexcept {
     firstFailure = sensorStatus;
   }
 
-  if (turnLedsOff) {
-    _statusLeds.setState(LedIndex::LED1, LedState::Off);
-    _statusLeds.setState(LedIndex::LED2, LedState::Off);
-    _statusLeds.setState(LedIndex::LED3, LedState::Off);
-  }
-
   const bool outputsSafe = _coilController.allDriversDisabled() &&
-                           (_coilController.appliedCurrentMilliamps() ==
-                            config::SafeStartupCurrentMilliamps);
+                           _coilController.allCurrentThresholdOutputsDisabled();
   const bool success = outputsSafe && (firstFailure == HAL_OK);
   _safetyManager.reportSafeStateResult(success);
+  if (updateFaultIndicator) {
+    this->updateFaultIndicator();
+  }
   if (!success && (firstFailure == HAL_OK)) {
     return HAL_ERROR;
   }
@@ -187,8 +183,7 @@ void BoardApplication::processSafety() noexcept {
 
   const SafetySnapshot snapshot{
       _coilController.allDriversDisabled() &&
-          (_coilController.appliedCurrentMilliamps() ==
-           config::SafeStartupCurrentMilliamps),
+          _coilController.allCurrentThresholdOutputsDisabled(),
       _coilController.faultedDriversDisabled(),
       _coilController.allFaultInputsReleased(),
   };
@@ -203,6 +198,7 @@ void BoardApplication::processSafety() noexcept {
     const bool hardwareCleared = _coilController.clearFaultHardware(faultEpoch);
     (void)_safetyManager.completeFaultClear(faultEpoch, hardwareCleared, true);
   }
+  updateFaultIndicator();
 }
 
 void BoardApplication::process() noexcept {
@@ -214,19 +210,10 @@ void BoardApplication::process() noexcept {
     NVIC_SystemReset();
     return;
   }
-  if (_sensorController.takeHostCalibrationRequest()) {
-    const bool succeeded =
-        _sensorController.runAutomaticCalibrationBlocking(_coilController);
-    _sensorController.completeHostCalibration(succeeded);
-    return;
-  }
-  if (_userInput.takePress(dda::UserInputId::Input2)) {
-    _sensorController.setAllDefault();
-  }
-  _userInput.process();
+
+  // USER_IN1 intentionally has no DDA V2 application action.
   _requestManager.process();
   _usbController.processLaunchDataTransfer();
-  _statusLeds.update();
 }
 
 bool BoardApplication::setRequestedCoilCurrentMilliamps(
@@ -241,7 +228,10 @@ bool BoardApplication::clearFault() noexcept {
     return false;
   }
   const bool hardwareCleared = _coilController.clearFaultHardware(faultEpoch);
-  return _safetyManager.completeFaultClear(faultEpoch, hardwareCleared, false);
+  const bool cleared =
+      _safetyManager.completeFaultClear(faultEpoch, hardwareCleared, false);
+  updateFaultIndicator();
+  return cleared;
 }
 
 bool BoardApplication::powerStageReadyForCommands() const noexcept {
@@ -263,37 +253,23 @@ BoardApplication::initializationFailure() const noexcept {
   return _initializationFailure;
 }
 
-UserInput &BoardApplication::userInput() noexcept { return _userInput; }
-
-Display &BoardApplication::display() noexcept { return _display; }
-
-bool BoardApplication::isDisplayInitialized() const noexcept {
-  return _display.isInitialized();
-}
-
-StatusLeds &BoardApplication::statusLeds() noexcept { return _statusLeds; }
-
+StatusLed &BoardApplication::statusLed() noexcept { return _statusLed; }
 Dac088s085 &BoardApplication::externalDac() noexcept { return _externalDac; }
-
-CalibrationStore &BoardApplication::calibrationStore() noexcept {
-  return _calibrationStore;
-}
-
 SensorController &BoardApplication::sensorController() noexcept {
   return _sensorController;
 }
-
 CoilController &BoardApplication::coilController() noexcept {
   return _coilController;
 }
 
+void BoardApplication::updateFaultIndicator() noexcept {
+  _statusLed.setFaultLatched(_safetyManager.faultMask() != 0U);
+}
+
 void BoardApplication::enableSafetyInterrupts() noexcept {
   HAL_NVIC_SetPriority(EXTI0_1_IRQn, 0U, 0U);
-  HAL_NVIC_SetPriority(EXTI2_3_IRQn, 0U, 0U);
   HAL_NVIC_SetPriority(EXTI4_15_IRQn, 0U, 0U);
-
   HAL_NVIC_EnableIRQ(EXTI0_1_IRQn);
-  HAL_NVIC_EnableIRQ(EXTI2_3_IRQn);
   HAL_NVIC_EnableIRQ(EXTI4_15_IRQn);
 }
 
@@ -305,8 +281,7 @@ BoardApplication &boardApplication() noexcept {
 } // namespace dda
 
 extern "C" void DdaApplication_Initialize(void) {
-  dda::BoardApplication &application = dda::boardApplication();
-  (void)application.init();
+  (void)dda::boardApplication().init();
 }
 
 extern "C" void DdaApplication_Process(void) {

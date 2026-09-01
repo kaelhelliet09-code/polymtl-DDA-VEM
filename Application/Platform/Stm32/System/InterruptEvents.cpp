@@ -18,12 +18,14 @@ volatile bool safetyInterruptPending = false;
 uint32_t velocitySensor1Timestamp = 0U;
 bool velocitySensor1Captured = false;
 
-constexpr uint32_t VelocitySensor1CaptureChannel = TIM_CHANNEL_3;
-constexpr uint32_t VelocitySensor2CaptureChannel = TIM_CHANNEL_4;
+// DDA_V2.ioc maps VEL_SENSOR_1/PC7 to TIM2_CH4 and VEL_SENSOR_2/PC6 to
+// TIM2_CH3. Keep the HAL channel and active-channel enum domains paired.
+constexpr uint32_t VelocitySensor1CaptureChannel = TIM_CHANNEL_4;
+constexpr uint32_t VelocitySensor2CaptureChannel = TIM_CHANNEL_3;
 constexpr HAL_TIM_ActiveChannel VelocitySensor1ActiveChannel =
-    HAL_TIM_ACTIVE_CHANNEL_3;
-constexpr HAL_TIM_ActiveChannel VelocitySensor2ActiveChannel =
     HAL_TIM_ACTIVE_CHANNEL_4;
+constexpr HAL_TIM_ActiveChannel VelocitySensor2ActiveChannel =
+    HAL_TIM_ACTIVE_CHANNEL_3;
 
 constexpr uint32_t gpioTwoBitFieldMask(uint32_t pins) noexcept {
   uint32_t mask = 0U;
@@ -88,7 +90,6 @@ bool takeSafetyInterruptEvent() noexcept {
 extern "C" void HAL_GPIO_EXTI_Falling_Callback(uint16_t gpioPin) {
   switch (gpioPin) {
   case FAULT_H1_Pin:
-
     safetyInterruptPending = true;
     dda::CoilController::handleDriverFaultFromIsr(dda::Driver::H1);
     break;
@@ -189,21 +190,29 @@ extern "C" void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
 }
 
 extern "C" void DdaEmergency_DisablePowerOutputs(void) {
-  constexpr uint32_t allEnablePins =
-      SLEEP_H1_Pin | SLEEP_H2_Pin | SLEEP_H3_Pin | SLEEP_H4_Pin;
-  constexpr uint32_t twoBitMask = gpioTwoBitFieldMask(allEnablePins);
-  constexpr uint32_t outputModeBits = gpioOutputModeBits(allEnablePins);
-  constexpr uint32_t pullDownBits = gpioPullDownBits(allEnablePins);
+  constexpr uint32_t portCEnablePins = SLEEP_H1_Pin | SLEEP_H2_Pin;
+  constexpr uint32_t portBEnablePins = SLEEP_H3_Pin | SLEEP_H4_Pin;
+  constexpr uint32_t portCTwoBitMask = gpioTwoBitFieldMask(portCEnablePins);
+  constexpr uint32_t portBTwoBitMask = gpioTwoBitFieldMask(portBEnablePins);
 
-  // Error_Handler can run before CubeMX has clocked or configured GPIOC.
-  // The board pin map places every bridge EN on GPIOC; establish their
-  // output-low level directly, without relying on HAL initialization state.
-  RCC->IOPENR |= RCC_IOPENR_GPIOCEN;
+  // Error_Handler can run before CubeMX has clocked or configured either GPIO
+  // bank. Establish all four nSLEEP outputs low directly.
+  RCC->IOPENR |= RCC_IOPENR_GPIOCEN | RCC_IOPENR_GPIOBEN;
   (void)RCC->IOPENR;
-  GPIOC->BSRR = allEnablePins << 16U;
-  GPIOC->OTYPER &= ~allEnablePins;
-  GPIOC->OSPEEDR &= ~twoBitMask;
-  GPIOC->PUPDR = (GPIOC->PUPDR & ~twoBitMask) | pullDownBits;
-  GPIOC->MODER = (GPIOC->MODER & ~twoBitMask) | outputModeBits;
-  GPIOC->BSRR = allEnablePins << 16U;
+  GPIOC->BSRR = portCEnablePins << 16U;
+  GPIOB->BSRR = portBEnablePins << 16U;
+  GPIOC->OTYPER &= ~portCEnablePins;
+  GPIOB->OTYPER &= ~portBEnablePins;
+  GPIOC->OSPEEDR &= ~portCTwoBitMask;
+  GPIOB->OSPEEDR &= ~portBTwoBitMask;
+  GPIOC->PUPDR =
+      (GPIOC->PUPDR & ~portCTwoBitMask) | gpioPullDownBits(portCEnablePins);
+  GPIOB->PUPDR =
+      (GPIOB->PUPDR & ~portBTwoBitMask) | gpioPullDownBits(portBEnablePins);
+  GPIOC->MODER =
+      (GPIOC->MODER & ~portCTwoBitMask) | gpioOutputModeBits(portCEnablePins);
+  GPIOB->MODER =
+      (GPIOB->MODER & ~portBTwoBitMask) | gpioOutputModeBits(portBEnablePins);
+  GPIOC->BSRR = portCEnablePins << 16U;
+  GPIOB->BSRR = portBEnablePins << 16U;
 }

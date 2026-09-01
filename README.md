@@ -12,7 +12,7 @@ Application/       User-owned C++ firmware
   Config/          Board, power, safety, sensor, storage, and USB settings
   Drivers/         DRV8874, INA226, DAC, and velocity-sensor drivers
   Platform/Stm32/  HAL adapters
-  Service/         Launch, power, safety, sensor, UI, USB, and calibration logic
+  Service/         Launch, power, safety, sensor, UI, and USB logic
 Core/              CubeMX startup and peripheral initialization
 Drivers/           STM32 HAL and CMSIS
 Middlewares/       STM32 USB device middleware
@@ -22,7 +22,7 @@ Tests/Firmware/    Board-independent C++ tests
 docs/              Focused design and hardware notes
 ```
 
-`DDA.ioc` is the source of truth for generated peripheral configuration. Keep
+`DDA_V2.ioc` is the source of truth for generated peripheral configuration. Keep
 application behavior under `Application`; generated changes must stay in
 CubeMX user sections or user-owned adapters.
 
@@ -34,9 +34,11 @@ safety service. A fault removes drive immediately and prevents unsafe commands
 from restoring it. The external hardware arming system remains the physical
 power interlock.
 
-Current commands are per bridge, from 0 to 3000 mA in 25 mA steps. The INA226
-uses a separate 6 A whole-board measurement range; this is not a software
-current limit.
+Current commands can update all bridges or one bridge independently, from 0
+to 3000 mA in 25 mA steps. A live bridge accepts a new VREF without a sleep
+cycle; a sleeping bridge retains the request while its VREF remains at zero.
+The INA226 uses a separate 6 A whole-board measurement range; this is not a
+software current limit.
 
 ## Build and automated tests
 
@@ -72,11 +74,10 @@ Flash the current firmware, connect the board over USB CDC, install the Python
 package as shown above, and run from `Host`:
 
 ```powershell
-python run_competition.py --port COM7 --technician-test all
+python run_competition.py --port COM7 --technician-test coil
 ```
 
-Use `--technician-test coil` or `--technician-test sensor` to run only one
-procedure. Omit `--port` when exactly one supported board is attached.
+Omit `--port` when exactly one supported board is attached.
 
 ### Coil test
 
@@ -101,14 +102,10 @@ the normal protected bench setup.
 The test fails if any fault appears at 1 A or no fault appears at 2 A. It does
 not clear a latched fault automatically.
 
-### Sensor test
-
-1. Put all four sensors in the calibration apparatus.
-2. Start the command and confirm the prompt.
-3. The firmware disables all bridges, sweeps and calibrates each sensor, saves
-   the result, and returns only after the complete calibration succeeds.
-4. The organizer reads back and prints each sensor's LED-current DAC code and
-   comparator-trip DAC code. Missing or failed calibration stops the test.
+The V1 automatic sensor calibration procedure is not supported by this V2
+firmware. IR LEDs are GPIO-enabled and have no LED-current DAC code. Sensor
+VTRIP uses the fixed default from `SensorConfig.h` until a V2 calibration
+procedure is specified.
 
 ## Competition runner
 
@@ -137,16 +134,15 @@ limitations.
 
 ## Configuration
 
-Configuration is intentionally limited to six headers under
+Hardware behavior is configured by the headers under
 `Application/Config`:
 
 - `BoardConfig.h`: fixed topology, converter characteristics, and TIM2 clock
+- `ExternalDacConfig.h`: exclusive VTRIP and driver-VREF channel ownership
 - `PowerConfig.h`: INA226 and DRV8874 scaling and current limits
-- `SafetyConfig.h`: fault validation, wake delay, and direction dead time
-- `SensorConfig.h`: sensor mapping, DAC values, calibration, and spacing
-- `StorageConfig.h`: application and calibration Flash regions
+- `SafetyConfig.h`: fault validation and the blocking driver-wake delay
+- `SensorConfig.h`: sensor GPIO mapping, VTRIP default, and debounce interval
 - `UsbConfig.h`: CDC packet buffers and timeouts
 
-Include only the header that owns a setting. Flash layout values must remain in
-sync with `linker/STM32G0B1_DDA.ld`, and hardware mappings must remain in sync
-with `DDA.ioc`.
+Include only the header that owns a setting. Hardware mappings must remain in
+sync with `DDA_V2.ioc`.

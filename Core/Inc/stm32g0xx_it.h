@@ -61,9 +61,9 @@ void TIM7_LPTIM2_IRQHandler(void);
 void I2C1_IRQHandler(void);
 /* USER CODE BEGIN EFP */
 
-/** @brief Dispatch EXTI line 1 for the H-bridge 3 fault input. */
+/** @brief Dispatch EXTI lines 0 and 1 for H3 and H1 faults. */
 void EXTI0_1_IRQHandler(void);
-/** @brief Dispatch EXTI line 2 for the H-bridge 1 fault input. */
+/** @brief Dispatch the currently unused EXTI lines 2 and 3 vector. */
 void EXTI2_3_IRQHandler(void);
 /**
  * @brief Dispatch shared EXTI lines 4 through 15 for bridge faults, sensors,

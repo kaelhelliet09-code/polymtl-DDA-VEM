@@ -94,7 +94,10 @@ l'emploi.
 
 | Méthode | Description |
 | --- | --- |
-| `reglerCourant(courant_ma)` | Règle le courant entre 0 et 3000 mA, par pas de 25 mA. |
+| `reglerCourant(courant_ma, bobine=Bobine.TOUTES)` | Règle le courant de la bobine choisie, ou de toutes les bobines, entre 0 et 3000 mA par pas de 25 mA. |
+| `lireCourant(bobine)` | Lit le courant configuré d'une bobine en mA. `Bobine.TOUTES` n'est pas accepté. |
+| `reglerPmode(mode_pwm)` | Sélectionne le mode PWM (`True`) ou PH/EN (`False`); tous les pilotes doivent d'abord être en veille. |
+| `lirePmode()` | Retourne `True` lorsque le mode PWM partagé est configuré. |
 | `activer(bobine, direction)` | Alimente la bobine sélectionnée dans la direction demandée. |
 | `desactiver(bobine=Bobine.TOUTES)` | Coupe le courant sans mettre le pilote électronique en veille. |
 | `reveiller(bobine=Bobine.TOUTES)` | Réveille le pilote électronique de la bobine. |

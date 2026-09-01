@@ -31,7 +31,7 @@ extern "C" {
 #endif
 
 /**
- * @brief Dispatches a falling-edge driver fault or calibration event.
+ * @brief Dispatches a falling-edge driver fault or sensor event.
  * @param gpioPin HAL GpioPin pin mask for a configured EXTI input.
  * @note Unrecognized pins are ignored.
  */

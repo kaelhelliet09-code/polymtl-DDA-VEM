@@ -8,9 +8,9 @@ roles:
 3. `Service` coordinates devices into board behavior.
 4. `App` constructs the system and owns startup and foreground processing.
 
-The USB protocol and calibration record codec are HAL-independent libraries
-shared by firmware and board-independent tests. The generated `Core`,
-`USB_DEVICE`, `Drivers`, and `Middlewares` trees retain their CubeMX locations.
+The USB protocol is a HAL-independent library shared by firmware and
+board-independent tests. The generated `Core`, `USB_DEVICE`, `Drivers`, and
+`Middlewares` trees retain their CubeMX locations.
 
 Test-boundary notes are under [`testing`](testing/).
 

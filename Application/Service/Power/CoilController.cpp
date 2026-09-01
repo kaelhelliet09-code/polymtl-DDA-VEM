@@ -9,7 +9,6 @@
 
 extern "C" {
 #include "main.h"
-extern DAC_HandleTypeDef hdac1;
 }
 
 namespace {
@@ -85,25 +84,51 @@ bool allDriversSelected(uint8_t options) noexcept {
   return options == static_cast<uint8_t>(dda::BridgeOptions::All);
 }
 
+bool setCurrentCommandDriver(dda::CoilCommand command,
+                             dda::Driver &driver) noexcept {
+  const uint8_t value = static_cast<uint8_t>(command);
+  const uint8_t first = static_cast<uint8_t>(dda::CoilCommand::SetCurrentH1);
+  const uint8_t last = static_cast<uint8_t>(dda::CoilCommand::SetCurrentH4);
+  if ((value < first) || (value > last)) {
+    return false;
+  }
+  driver = static_cast<dda::Driver>(value - first);
+  return true;
+}
+
+bool getCurrentCommandDriver(dda::CoilCommand command,
+                             dda::Driver &driver) noexcept {
+  const uint8_t value = static_cast<uint8_t>(command);
+  const uint8_t first = static_cast<uint8_t>(dda::CoilCommand::GetCurrentH1);
+  const uint8_t last = static_cast<uint8_t>(dda::CoilCommand::GetCurrentH4);
+  if ((value < first) || (value > last)) {
+    return false;
+  }
+  driver = static_cast<dda::Driver>(value - first);
+  return true;
+}
+
 } // namespace
 
 namespace dda {
 
-CoilController::CoilController(SafetyManager &safetyManager) noexcept
+CoilController::CoilController(SafetyManager &safetyManager, Dac088s085 &dac,
+                               GpioPin &pmode) noexcept
     : _drivers{
           {IN1_H1_GPIO_Port, IN1_H1_Pin, IN2_H1_GPIO_Port, IN2_H1_Pin,
-           SLEEP_H1_GPIO_Port, SLEEP_H1_Pin, FAULT_H1_GPIO_Port, FAULT_H1_Pin},
+           SLEEP_H1_GPIO_Port, SLEEP_H1_Pin, FAULT_H1_GPIO_Port, FAULT_H1_Pin,
+           dac, config::DriverCurrentLimitDacChannels[0]},
           {IN1_H2_GPIO_Port, IN1_H2_Pin, IN2_H2_GPIO_Port, IN2_H2_Pin,
-           SLEEP_H2_GPIO_Port, SLEEP_H2_Pin, FAULT_H2_GPIO_Port, FAULT_H2_Pin},
+           SLEEP_H2_GPIO_Port, SLEEP_H2_Pin, FAULT_H2_GPIO_Port, FAULT_H2_Pin,
+           dac, config::DriverCurrentLimitDacChannels[1]},
           {IN1_H3_GPIO_Port, IN1_H3_Pin, IN2_H3_GPIO_Port, IN2_H3_Pin,
-           SLEEP_H3_GPIO_Port, SLEEP_H3_Pin, FAULT_H3_GPIO_Port, FAULT_H3_Pin},
+           SLEEP_H3_GPIO_Port, SLEEP_H3_Pin, FAULT_H3_GPIO_Port, FAULT_H3_Pin,
+           dac, config::DriverCurrentLimitDacChannels[2]},
           {IN1_H4_GPIO_Port, IN1_H4_Pin, IN2_H4_GPIO_Port, IN2_H4_Pin,
-           SLEEP_H4_GPIO_Port, SLEEP_H4_Pin, FAULT_H4_GPIO_Port, FAULT_H4_Pin},
+           SLEEP_H4_GPIO_Port, SLEEP_H4_Pin, FAULT_H4_GPIO_Port, FAULT_H4_Pin,
+           dac, config::DriverCurrentLimitDacChannels[3]},
       },
-      _currentControlH12(hdac1, DAC_CHANNEL_1),
-      _currentControlH34(hdac1, DAC_CHANNEL_2),
-      _requestedCurrentMilliamps(config::DefaultCoilCurrentMilliamps),
-      _appliedCurrentMilliamps(0U), _safetyManager(safetyManager) {
+      _pmode(pmode), _pwmMode(true), _safetyManager(safetyManager) {
   activeController = this;
 }
 
@@ -116,26 +141,17 @@ HAL_StatusTypeDef CoilController::init() noexcept {
     driverWakeQualificationMask = 0U;
   }
 
+  HAL_StatusTypeDef status = _pmode.set() ? HAL_OK : HAL_ERROR;
+  _pwmMode = true;
   for (Drv8874 &driver : _drivers) {
-    driver.init();
-  }
-
-  HAL_StatusTypeDef status = _currentControlH12.write(0U);
-  if (status == HAL_OK) {
-    status = _currentControlH34.write(0U);
-  }
-  if (status == HAL_OK) {
-    status = _currentControlH12.start();
-  }
-  if (status == HAL_OK) {
-    status = _currentControlH34.start();
-    if (status != HAL_OK) {
-      _currentControlH12.stop();
+    if (!driver.setPwmMode(true) && (status == HAL_OK)) {
+      status = HAL_ERROR;
+    }
+    const HAL_StatusTypeDef driverStatus = driver.init();
+    if ((status == HAL_OK) && (driverStatus != HAL_OK)) {
+      status = driverStatus;
     }
   }
-
-  _requestedCurrentMilliamps = config::DefaultCoilCurrentMilliamps;
-  _appliedCurrentMilliamps = 0U;
   if (status != HAL_OK) {
     latchSafeStateFailure();
   }
@@ -147,7 +163,7 @@ bool CoilController::setDriverState(Drv8874::State state) noexcept {
     return false;
   }
   if (state == Drv8874::State::Sleep) {
-    return disableDriverGpios();
+    return disableAll() == HAL_OK;
   }
   for (const Drv8874 &driver : _drivers) {
     if (driver.state() == Drv8874::State::Sleep) {
@@ -157,12 +173,15 @@ bool CoilController::setDriverState(Drv8874::State state) noexcept {
 
   const bool energizedTransition = isEnergizedCommand(state);
   if (energizedTransition) {
-    if ((_requestedCurrentMilliamps == 0U) || hasAnyFault()) {
+    if (hasAnyFault()) {
       return false;
     }
-    if (applyCurrentMilliamps(_requestedCurrentMilliamps) != HAL_OK) {
-      (void)disableAll();
-      return false;
+    for (uint8_t index = 0U; index < DriverCount; ++index) {
+      if ((_drivers[index].currentThresholdMilliamps() == 0U) ||
+          (applyCurrentThreshold(index) != HAL_OK)) {
+        (void)disableAll();
+        return false;
+      }
     }
   }
 
@@ -184,7 +203,7 @@ bool CoilController::setDriverState(Drv8874::State state) noexcept {
     }
   }
   if ((state == Drv8874::State::CoilOff) &&
-      (applyCurrentMilliamps(0U) != HAL_OK)) {
+      (disableCurrentThresholdOutputs() != HAL_OK)) {
     (void)disableAll();
     return false;
   }
@@ -202,7 +221,7 @@ bool CoilController::setDriverState(Driver driver,
     if (!_drivers[index].setState(state)) {
       return false;
     }
-    return !allDriversDisabled() || (applyCurrentMilliamps(0U) == HAL_OK);
+    return _drivers[index].disableCurrentThresholdOutput() == HAL_OK;
   }
   if (_drivers[index].state() == Drv8874::State::Sleep) {
     return false;
@@ -210,11 +229,11 @@ bool CoilController::setDriverState(Driver driver,
 
   const bool energizedTransition = isEnergizedCommand(state);
   if (energizedTransition) {
-    if ((_requestedCurrentMilliamps == 0U) || hasGlobalFault() ||
-        hasFault(driver)) {
+    if ((_drivers[index].currentThresholdMilliamps() == 0U) ||
+        hasGlobalFault() || hasFault(driver)) {
       return false;
     }
-    if (applyCurrentMilliamps(_requestedCurrentMilliamps) != HAL_OK) {
+    if (applyCurrentThreshold(index) != HAL_OK) {
       (void)disableAll();
       return false;
     }
@@ -244,12 +263,7 @@ bool CoilController::setDriverState(Driver driver,
     }
   }
   if (state == Drv8874::State::CoilOff) {
-    bool anyDriverEnergized = false;
-    for (const Drv8874 &other : _drivers) {
-      anyDriverEnergized =
-          anyDriverEnergized || isEnergizedCommand(other.state());
-    }
-    if (!anyDriverEnergized && (applyCurrentMilliamps(0U) != HAL_OK)) {
+    if (_drivers[index].disableCurrentThresholdOutput() != HAL_OK) {
       (void)disableAll();
       return false;
     }
@@ -265,35 +279,108 @@ Drv8874::State CoilController::driverState(Driver driver) const noexcept {
 bool CoilController::setRequestedCurrentMilliamps(
     uint16_t currentMilliamps) noexcept {
   if ((currentMilliamps > config::MaximumCoilCurrentMilliamps) ||
-      hasAnyFault() || (_appliedCurrentMilliamps != 0U)) {
+      ((currentMilliamps != 0U) && hasAnyFault())) {
     return false;
   }
-  for (const Drv8874 &driver : _drivers) {
-    if ((driver.state() != Drv8874::State::Sleep) &&
-        (driver.state() != Drv8874::State::CoilOff)) {
+  uint16_t previousThresholds[DriverCount]{};
+  for (uint8_t index = 0U; index < DriverCount; ++index) {
+    previousThresholds[index] = _drivers[index].currentThresholdMilliamps();
+  }
+  for (uint8_t index = 0U; index < DriverCount; ++index) {
+    if (_drivers[index].setCurrentThresholdMilliamps(currentMilliamps) !=
+        HAL_OK) {
+      (void)disableAll();
+      for (uint8_t rollbackIndex = 0U; rollbackIndex < DriverCount;
+           ++rollbackIndex) {
+        (void)_drivers[rollbackIndex].setCurrentThresholdMilliamps(
+            previousThresholds[rollbackIndex]);
+      }
       return false;
     }
   }
-
-  _requestedCurrentMilliamps = currentMilliamps;
   return true;
 }
 
 uint16_t CoilController::requestedCurrentMilliamps() const noexcept {
-  return _requestedCurrentMilliamps;
+  return _drivers[0].currentThresholdMilliamps();
 }
 
 uint16_t CoilController::appliedCurrentMilliamps() const noexcept {
-  return _appliedCurrentMilliamps;
+  uint16_t maximumApplied = 0U;
+  for (const Drv8874 &driver : _drivers) {
+    if (driver.appliedCurrentThresholdMilliamps() > maximumApplied) {
+      maximumApplied = driver.appliedCurrentThresholdMilliamps();
+    }
+  }
+  return maximumApplied;
 }
+
+bool CoilController::setCurrentThresholdMilliamps(
+    Driver driver, uint16_t currentMilliamps) noexcept {
+  const uint8_t index = static_cast<uint8_t>(driver);
+  if ((index >= DriverCount) ||
+      (currentMilliamps > config::MaximumCoilCurrentMilliamps) ||
+      ((currentMilliamps != 0U) && (hasGlobalFault() || hasFault(driver)))) {
+    return false;
+  }
+  return _drivers[index].setCurrentThresholdMilliamps(currentMilliamps) ==
+         HAL_OK;
+}
+
+uint16_t
+CoilController::currentThresholdMilliamps(Driver driver) const noexcept {
+  const uint8_t index = static_cast<uint8_t>(driver);
+  return index < DriverCount ? _drivers[index].currentThresholdMilliamps() : 0U;
+}
+
+uint16_t CoilController::appliedCurrentMilliamps(Driver driver) const noexcept {
+  const uint8_t index = static_cast<uint8_t>(driver);
+  return index < DriverCount
+             ? _drivers[index].appliedCurrentThresholdMilliamps()
+             : 0U;
+}
+
+bool CoilController::allCurrentThresholdOutputsDisabled() const noexcept {
+  for (const Drv8874 &driver : _drivers) {
+    if (driver.appliedCurrentThresholdMilliamps() != 0U) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool CoilController::setPmode(bool pwmMode) noexcept {
+  if (!allDriversDisabled() || !allCurrentThresholdOutputsDisabled()) {
+    return false;
+  }
+  if (_pwmMode == pwmMode) {
+    return true;
+  }
+
+  // PMODE is sampled only when nSLEEP rises. Unlike VREF updates, changing
+  // this shared input genuinely requires all four devices to enter sleep.
+  HAL_Delay(config::PmodeRelatchDelayMilliseconds);
+  if (!_pmode.write(pwmMode)) {
+    return false;
+  }
+  for (Drv8874 &driver : _drivers) {
+    if (!driver.setPwmMode(pwmMode)) {
+      return false;
+    }
+  }
+  _pwmMode = pwmMode;
+  return true;
+}
+
+bool CoilController::pmode() const noexcept { return _pwmMode; }
 
 bool CoilController::beginTestDriverWake(Driver driver) noexcept {
   const uint8_t index = static_cast<uint8_t>(driver);
   const uint32_t driverFault = faultBit(driver);
   if ((index >= DriverCount) || (driverFault == 0U) ||
       (_drivers[index].state() != Drv8874::State::Sleep) ||
-      (_appliedCurrentMilliamps != 0U) || hasGlobalFault() ||
-      hasFault(driver)) {
+      (_drivers[index].appliedCurrentThresholdMilliamps() != 0U) ||
+      hasGlobalFault() || hasFault(driver)) {
     return false;
   }
   for (const Drv8874 &other : _drivers) {
@@ -322,15 +409,16 @@ bool CoilController::beginTestDriverWake(Driver driver) noexcept {
     }
   }
 
-  // In PH/EN mode EN low is a non-driving low-side brake. It is safe while
-  // nSLEEP rises and the charge pump completes tWAKE.
+  // In PWM mode IN1=IN2=0 is coast/high-Z while nSLEEP rises and the charge
+  // pump completes tWAKE.
   if (!stateApplied) {
     return false;
   }
 
-  // HAL_Delay is blocking and uses the HAL SysTick timebase. Keep this
-  // driver's nFAULT edge unclassified until the DRV8874 wake time expires.
+  // This is the only state-transition delay: a blocking wait after the
+  // driver's Sleep-to-CoilOff transition while its nFAULT output stabilizes.
   HAL_Delay(config::DriverWakeQualificationMilliseconds);
+  (void)_drivers[index].clearFault();
   return true;
 }
 
@@ -386,7 +474,7 @@ HAL_StatusTypeDef CoilController::disableAll() noexcept {
   forceBridgeEnablesLow();
 
   const bool disabled = disableDriverGpios();
-  const HAL_StatusTypeDef currentStatus = applyCurrentMilliamps(0U);
+  const HAL_StatusTypeDef currentStatus = disableCurrentThresholdOutputs();
   if (disabled && (currentStatus == HAL_OK)) {
     return HAL_OK;
   }
@@ -446,7 +534,7 @@ bool CoilController::hasFault(Driver driver) const noexcept {
 }
 
 bool CoilController::clearFaultHardware(uint32_t expectedFaultEpoch) noexcept {
-  if (!allDriversDisabled() || (_appliedCurrentMilliamps != 0U)) {
+  if (!allDriversDisabled() || !allCurrentThresholdOutputsDisabled()) {
     return false;
   }
 
@@ -512,19 +600,20 @@ HAL_StatusTypeDef CoilController::servicePendingDriverShutdowns() noexcept {
   }
 
   bool disabled = true;
+  HAL_StatusTypeDef currentStatus = HAL_OK;
   for (uint8_t index = 0U; index < DriverCount; ++index) {
     if ((driverShutdowns & (1UL << index)) != 0U) {
       disabled = _drivers[index].setState(Drv8874::State::Sleep) && disabled;
+      const HAL_StatusTypeDef driverCurrentStatus =
+          _drivers[index].disableCurrentThresholdOutput();
+      if ((currentStatus == HAL_OK) && (driverCurrentStatus != HAL_OK)) {
+        currentStatus = driverCurrentStatus;
+      }
     }
   }
-  if (!disabled) {
+  if (!disabled || (currentStatus != HAL_OK)) {
     latchSafeStateFailure();
-    return HAL_ERROR;
-  }
-
-  if (allDriversDisabled() && (applyCurrentMilliamps(0U) != HAL_OK)) {
-    latchSafeStateFailure();
-    return HAL_ERROR;
+    return currentStatus != HAL_OK ? currentStatus : HAL_ERROR;
   }
 
   {
@@ -587,9 +676,10 @@ void CoilController::handlePowerAlertFromIsr() noexcept {
 }
 
 void CoilController::forceBridgeEnablesLow() noexcept {
-  constexpr uint32_t allEnablePins =
-      SLEEP_H1_Pin | SLEEP_H2_Pin | SLEEP_H3_Pin | SLEEP_H4_Pin;
-  SLEEP_H1_GPIO_Port->BSRR = allEnablePins << 16U;
+  constexpr uint32_t portCPins = SLEEP_H1_Pin | SLEEP_H2_Pin;
+  constexpr uint32_t portBPins = SLEEP_H3_Pin | SLEEP_H4_Pin;
+  GPIOC->BSRR = portCPins << 16U;
+  GPIOB->BSRR = portBPins << 16U;
 }
 
 void CoilController::latchSafeStateFailure() noexcept {
@@ -600,23 +690,20 @@ void CoilController::latchSafeStateFailure() noexcept {
 }
 
 HAL_StatusTypeDef
-CoilController::applyCurrentMilliamps(uint16_t currentMilliamps) noexcept {
-  const uint16_t dacValue =
-      config::currentMilliampsToReferenceCode(currentMilliamps);
+CoilController::applyCurrentThreshold(uint8_t index) noexcept {
+  return index < DriverCount ? _drivers[index].applyCurrentThreshold()
+                             : HAL_ERROR;
+}
 
-  const HAL_StatusTypeDef h12Status = _currentControlH12.write(dacValue);
-  const HAL_StatusTypeDef h34Status = _currentControlH34.write(dacValue);
-  if ((h12Status == HAL_OK) && (h34Status == HAL_OK)) {
-    _appliedCurrentMilliamps = currentMilliamps;
-    return HAL_OK;
+HAL_StatusTypeDef CoilController::disableCurrentThresholdOutputs() noexcept {
+  HAL_StatusTypeDef firstFailure = HAL_OK;
+  for (Drv8874 &driver : _drivers) {
+    const HAL_StatusTypeDef status = driver.disableCurrentThresholdOutput();
+    if ((firstFailure == HAL_OK) && (status != HAL_OK)) {
+      firstFailure = status;
+    }
   }
-
-  const HAL_StatusTypeDef zeroH12 = _currentControlH12.write(0U);
-  const HAL_StatusTypeDef zeroH34 = _currentControlH34.write(0U);
-  if ((zeroH12 == HAL_OK) && (zeroH34 == HAL_OK)) {
-    _appliedCurrentMilliamps = 0U;
-  }
-  return h12Status != HAL_OK ? h12Status : h34Status;
+  return firstFailure;
 }
 
 bool CoilController::disableDriverGpios() noexcept {
@@ -659,8 +746,11 @@ bool CoilController::verifyEnabledDriverOrIsolate(uint8_t index) noexcept {
 
   if (powerFaultObserved) {
     forceBridgeEnablesLow();
+    _safetyManager.handlePowerFault();
   } else {
-    forceDriverEnableLow(static_cast<Driver>(index));
+    const Driver driver = static_cast<Driver>(index);
+    _drivers[index].onFaultInterrupt();
+    latchDriverFault(driver);
   }
   return false;
 }
@@ -670,7 +760,12 @@ void CoilController::isolateAfterFailedEnable(uint8_t index) noexcept {
     (void)disableAll();
     return;
   }
-  (void)_drivers[index].setState(Drv8874::State::Sleep);
+  const bool sleeping = _drivers[index].setState(Drv8874::State::Sleep);
+  const HAL_StatusTypeDef currentStatus =
+      _drivers[index].disableCurrentThresholdOutput();
+  if (!sleeping || (currentStatus != HAL_OK)) {
+    latchSafeStateFailure();
+  }
 }
 
 void CoilController::processRequest(Request &request) noexcept {
@@ -680,7 +775,24 @@ void CoilController::processRequest(Request &request) noexcept {
 
   bool succeeded = false;
   Driver driver = Driver::H1;
-  switch (static_cast<CoilCommand>(request.command)) {
+  const CoilCommand command = static_cast<CoilCommand>(request.command);
+  if (setCurrentCommandDriver(command, driver)) {
+    const uint16_t currentMilliamps =
+        static_cast<uint16_t>(request.options) * CoilCurrentOptionStepMilliamps;
+    succeeded = setCurrentThresholdMilliamps(driver, currentMilliamps);
+    request.options = static_cast<uint8_t>(succeeded ? CoilStatus::Succeeded
+                                                     : CoilStatus::Failed);
+    request.complete(Service::CoilControl);
+    return;
+  }
+  if (getCurrentCommandDriver(command, driver)) {
+    request.options = static_cast<uint8_t>(currentThresholdMilliamps(driver) /
+                                           CoilCurrentOptionStepMilliamps);
+    request.complete(Service::CoilControl);
+    return;
+  }
+
+  switch (command) {
   case CoilCommand::Forward:
     succeeded = allDriversSelected(request.options)
                     ? setDriverState(Drv8874::State::Forward)
@@ -728,6 +840,22 @@ void CoilController::processRequest(Request &request) noexcept {
                     ? setDriverState(Drv8874::State::CoilOff)
                     : selectedDriver(request.options, driver) &&
                           setDriverState(driver, Drv8874::State::CoilOff);
+    break;
+  case CoilCommand::SetPmode:
+    succeeded = (request.options <= 1U) && setPmode(request.options != 0U);
+    break;
+  case CoilCommand::GetPmode:
+    request.options = static_cast<uint8_t>(pmode() ? 1U : 0U);
+    request.complete(Service::CoilControl);
+    return;
+  case CoilCommand::SetCurrentH1:
+  case CoilCommand::SetCurrentH2:
+  case CoilCommand::SetCurrentH3:
+  case CoilCommand::SetCurrentH4:
+  case CoilCommand::GetCurrentH1:
+  case CoilCommand::GetCurrentH2:
+  case CoilCommand::GetCurrentH3:
+  case CoilCommand::GetCurrentH4:
     break;
   default:
     break;

@@ -255,11 +255,12 @@ void I2C1_IRQHandler(void)
 
 // Each shared vector offers every configured line to HAL; HAL checks the
 // pending bit before invoking the application EXTI callback.
-void EXTI0_1_IRQHandler(void) { HAL_GPIO_EXTI_IRQHandler(FAULT_H3_Pin); }
-
-void EXTI2_3_IRQHandler(void) {
+void EXTI0_1_IRQHandler(void) {
+  HAL_GPIO_EXTI_IRQHandler(FAULT_H3_Pin);
   HAL_GPIO_EXTI_IRQHandler(FAULT_H1_Pin);
 }
+
+void EXTI2_3_IRQHandler(void) {}
 
 void EXTI4_15_IRQHandler(void) {
   HAL_GPIO_EXTI_IRQHandler(FAULT_H2_Pin);

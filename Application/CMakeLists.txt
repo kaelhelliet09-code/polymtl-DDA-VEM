@@ -6,26 +6,15 @@ target_include_directories(dda_usb_protocol PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-add_library(dda_calibration_codec STATIC
-    Service/Calibration/CalibrationRecordCodec.cpp
-)
-
-target_include_directories(dda_calibration_codec PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}
-)
-
 if(DDA_BUILD_HOST_TESTS_ONLY)
     dda_enable_strict_warnings(dda_usb_protocol AS_ERRORS CONVERSIONS)
-    dda_enable_strict_warnings(dda_calibration_codec AS_ERRORS CONVERSIONS)
     return()
 endif()
 
 dda_enable_strict_warnings(dda_usb_protocol CONVERSIONS)
-dda_enable_strict_warnings(dda_calibration_codec CONVERSIONS)
 
 add_library(dda_platform_stm32 OBJECT
     Platform/Stm32/Analog/AdcSampler.cpp
-    Platform/Stm32/Analog/InternalDacChannel.cpp
     Platform/Stm32/Gpio/GpioPin.cpp
     Platform/Stm32/I2c/I2cDevice.cpp
     Platform/Stm32/System/InterruptEvents.cpp
@@ -39,14 +28,12 @@ add_library(dda_application OBJECT
     Drivers/Dac088s085.cpp
     Drivers/Drv8874.cpp
     Drivers/Ina226.cpp
-    Service/Calibration/CalibrationStore.cpp
     Service/Launch/LaunchData.cpp
     Service/Launch/LaunchManager.cpp
     Service/Power/CoilController.cpp
     Service/Safety/SafetyManager.cpp
     Service/Sensor/SensorController.cpp
     Drivers/Sensors/VelocitySensor.cpp
-    Service/UI/Display.cpp
     Service/UI/StatusLed.cpp
     Service/UI/UserInput.cpp
     Service/RequestManager/RequestManager.cpp
@@ -82,7 +69,6 @@ target_link_libraries(dda_platform_stm32 PRIVATE
 )
 
 target_link_libraries(dda_application PRIVATE
-    dda_calibration_codec
     dda_platform_stm32
     dda_usb_protocol
 )

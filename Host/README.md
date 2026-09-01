@@ -19,24 +19,19 @@ board is attached. Otherwise pass `--port COM7`.
 
 ## Technician tests
 
-Run both qualification procedures:
-
-```powershell
-python run_competition.py --port COM7 --technician-test all
-```
-
-Or run one:
+Run the supported coil qualification procedure:
 
 ```powershell
 python run_competition.py --port COM7 --technician-test coil
-python run_competition.py --port COM7 --technician-test sensor
 ```
 
 The coil procedure prompts for the resistor bar, records the 1 A and 2 A bridge
-sequences, prints both fault checks, and displays the final launch graph. The
-sensor procedure prompts for the calibration apparatus, runs automatic device
-calibration, then prints both stored DAC codes for every sensor. See the root
-README for the full technician checklist.
+sequences, prints both fault checks, and displays the final launch graph. See
+the root README for the full technician checklist.
+
+The V1 automatic sensor-calibration API remains import-compatible for older
+host programs, but this V2 firmware rejects it: IR-LED current is no longer a
+DAC-controlled or stored calibration value.
 
 ## Organizer and participant use
 
@@ -69,7 +64,8 @@ from dda_host import Bobine, Capteur, CarteCompetition, Direction
 
 with CarteCompetition.connecter("COM7") as carte:
     carte.reglerFrequenceEchantillonnage(5000)
-    carte.reglerCourant(1000)
+    carte.reglerCourant(1000, Bobine.H1)
+    assert carte.lireCourant(Bobine.H1) == 1000
     carte.reveiller(Bobine.TOUTES)
     carte.demarrerLancement()
     carte.activer(Bobine.H1, Direction.AVANT)
@@ -95,6 +91,11 @@ matching rules, statistics, and limitations.
 
 The context manager attempts to abort an active launch and sleep all bridges
 before closing the serial port.
+
+Current limits may be set globally or per bridge with `setCurrent`; use
+`getCurrent` for individual readback. `setPmode`/`getPmode` control the shared
+DRV8874 mode. A PMODE change is accepted only after every bridge has been put
+to sleep.
 
 ## Test without hardware
 

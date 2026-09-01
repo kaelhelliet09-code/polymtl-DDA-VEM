@@ -1,73 +1,74 @@
 /**
  * @file Sensor.h
- * @brief Stores the fixed hardware resources belonging to one sensor.
+ * @brief Fixed GPIO and VTRIP resources belonging to one optical sensor.
  */
 
 #pragma once
 
 #include "Config/SensorConfig.h"
 #include "Drivers/Dac088s085.h"
+#include "Drivers/Sensors/SensorEdgeDebounce.h"
 #include "Drivers/Sensors/SensorId.h"
 #include "Platform/Stm32/Gpio/GpioPin.h"
+
 #include <cstdint>
 
 namespace dda {
 class SensorController;
 
-enum class SensorEdge : uint8_t { Rising = 0U, Falling = 1U };
-
+/** @brief Bounded rising/falling timestamp history for one sensor. */
 struct SensorEvents {
+  /** @brief Maximum stored timestamps of each polarity. */
   static constexpr uint8_t Capacity = 10U;
 
+  /** @brief Accepted rising-edge TIM2 timestamps. */
   uint32_t risingEdgeTimestamps[Capacity]{};
+  /** @brief Accepted falling-edge TIM2 timestamps. */
   uint32_t fallingEdgeTimestamps[Capacity]{};
+  /** @brief Number of valid entries in risingEdgeTimestamps. */
   uint8_t risingEdgeCount{0U};
+  /** @brief Number of valid entries in fallingEdgeTimestamps. */
   uint8_t fallingEdgeCount{0U};
 };
 
-/** @brief Owns the fixed GPIO and external-DAC channels for one sensor. */
+/** @brief Owns one trigger input, IR-LED enable output, and VTRIP channel. */
 class Sensor {
 public:
   /**
-   * @brief Binds one sensor to its trigger input and analog-output channels.
-   * @param sensorId Zero-based sensor identity.
-   * @param inputPort GPIO port containing the trigger input.
-   * @param inputPin GPIO pin mask for the trigger input.
-   * @param ledCurrentChannel External-DAC channel controlling LED current.
-   * @param tripVoltageChannel External-DAC channel controlling trip voltage.
+   * @brief Bind one sensor to its fixed input, LED GPIO, and VTRIP channel.
+   * @param sensorId Logical sensor identity.
+   * @param inputPort Trigger input GPIO bank.
+   * @param inputPin Trigger input pin mask.
+   * @param irLedEnablePort IR-LED enable GPIO bank.
+   * @param irLedEnablePin IR-LED enable pin mask.
+   * @param tripVoltageChannel External-DAC channel wired to VTRIP.
    */
   Sensor(SensorId sensorId, GPIO_TypeDef *inputPort, uint16_t inputPin,
-         DacChannel ledCurrentChannel, DacChannel tripVoltageChannel) noexcept
+         GPIO_TypeDef *irLedEnablePort, uint16_t irLedEnablePin,
+         DacChannel tripVoltageChannel) noexcept
       : _inputPin(inputPort, inputPin, GpioDirection::INPUT),
-        _ledCurrentChannel(ledCurrentChannel),
-        _tripVoltageChannel(tripVoltageChannel), _sensorId(sensorId) {}
+        _irLedEnable(irLedEnablePort, irLedEnablePin, GpioDirection::OUTPUT),
+        _tripVoltageChannel(tripVoltageChannel),
+        _debounce(config::SensorCaptureDebounceTicks), _sensorId(sensorId) {}
 
-  /**
-   * @brief Returns the sensor's trigger-input wrapper.
-   * @return Non-owning reference valid for this sensor's lifetime.
-   */
+  /** @brief Access the trigger input. @return Bound input GPIO. */
   const GpioPin &inputPin() const noexcept { return _inputPin; }
 
   /**
-   * @brief Writes the raw external-DAC code controlling LED current.
-   * @param dac External DAC that owns the configured channel.
-   * @param code Raw eight-bit DAC code.
-   * @param timeoutMilliseconds Blocking SPI timeout.
-   * @return HAL status from the DAC write.
+   * @brief Drive only this sensor's normal GPIO IR-LED enable.
+   * @param enabled Desired output state.
+   * @return Whether the GPIO write succeeded.
    */
-  HAL_StatusTypeDef
-  setCurrentLedCode(Dac088s085 &dac, uint8_t code,
-                    uint32_t timeoutMilliseconds =
-                        config::SensorDacTimeoutMilliseconds) noexcept {
-    return dac.write(_ledCurrentChannel, code, timeoutMilliseconds);
+  bool setIrLedEnabled(bool enabled) noexcept {
+    return _irLedEnable.write(enabled);
   }
 
   /**
-   * @brief Writes the raw external-DAC code controlling trip voltage.
-   * @param dac External DAC that owns the configured channel.
-   * @param code Raw eight-bit DAC code.
-   * @param timeoutMilliseconds Blocking SPI timeout.
-   * @return HAL status from the DAC write.
+   * @brief Write this sensor's comparator trip voltage through the DAC.
+   * @param dac Shared external DAC.
+   * @param code Raw eight-bit VTRIP code.
+   * @param timeoutMilliseconds Foreground SPI timeout.
+   * @return STM32 HAL SPI status.
    */
   HAL_StatusTypeDef
   setVoltageTripCode(Dac088s085 &dac, uint8_t code,
@@ -76,33 +77,21 @@ public:
     return dac.write(_tripVoltageChannel, code, timeoutMilliseconds);
   }
 
-  /**
-   * @brief Reports whether a trigger has been latched for this sensor.
-   * @return True after a trigger until clearTriggered() is called.
-   */
+  /** @brief Return the rising-edge latch. @return Whether it was triggered. */
   bool wasTriggered() const noexcept { return _triggered; }
-
-  /** @brief Clears the sensor's latched trigger state. */
+  /** @brief Clear the rising-edge latch. */
   void clearTriggered() noexcept { _triggered = false; }
-
+  /** @brief Access captured events. @return This sensor's event history. */
   const SensorEvents &events() const noexcept { return _events; }
 
 private:
   friend class SensorController;
 
-  bool refreshTriggered() noexcept {
-    if (_triggered) {
-      return true;
-    }
-    bool inputState = false;
-    if (!_inputPin.read(inputState)) {
-      return false;
-    }
-    if (inputState == (config::SensorTriggeredState == GPIO_PIN_SET)) {
-      _triggered = true;
-    }
-    return _triggered;
+  bool acceptEdge(SensorEdge edge, uint32_t edgeTimestamp) noexcept {
+    return _debounce.accept(edge, edgeTimestamp);
   }
+
+  void resetDebounce() noexcept { _debounce.reset(); }
 
   void clearEvents() noexcept {
     _events = {};
@@ -110,7 +99,7 @@ private:
     _fallingEdgeCount = 0U;
   }
 
-  void recordEdge(SensorEdge edge, uint32_t timestamp) noexcept {
+  void recordEdge(SensorEdge edge, uint32_t edgeTimestamp) noexcept {
     volatile uint8_t &count =
         edge == SensorEdge::Rising ? _risingEdgeCount : _fallingEdgeCount;
     if (count >= SensorEvents::Capacity) {
@@ -119,16 +108,17 @@ private:
     uint32_t *const timestamps = edge == SensorEdge::Rising
                                      ? _events.risingEdgeTimestamps
                                      : _events.fallingEdgeTimestamps;
-    timestamps[count] = timestamp;
+    timestamps[count] = edgeTimestamp;
     ++count;
     _events.risingEdgeCount = _risingEdgeCount;
     _events.fallingEdgeCount = _fallingEdgeCount;
   }
 
   GpioPin _inputPin;
-  DacChannel _ledCurrentChannel;
+  GpioPin _irLedEnable;
   DacChannel _tripVoltageChannel;
-  volatile bool _triggered = false;
+  SensorEdgeDebounce _debounce;
+  volatile bool _triggered{false};
   SensorEvents _events{};
   volatile uint8_t _risingEdgeCount{0U};
   volatile uint8_t _fallingEdgeCount{0U};

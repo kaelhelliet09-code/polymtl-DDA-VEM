@@ -8,7 +8,7 @@ namespace dda {
 enum class Service : uint8_t {
   None = 0U,          ///< No source or destination.
   CoilControl = 1U,   ///< Power-stage command service.
-  SensorControl = 2U, ///< Sensor calibration and notification service.
+  SensorControl = 2U, ///< Sensor configuration and notification service.
   LaunchManager = 3U, ///< Launch acquisition and lifecycle service.
   UsbControl = 4U,    ///< USB host ingress or response egress.
   Safety = 5U,        ///< Board safety-state service.

@@ -37,6 +37,8 @@ class FakeCompetitionSerial:
         self.reject_coils = False
         self.corrupt_crc = False
         self.disconnect_on_stop = False
+        self.coil_current_units = [0, 0, 0, 0]
+        self.pwm_mode = True
         self._received = bytearray()
         self._condition = threading.Condition()
         self._closed = False
@@ -61,6 +63,21 @@ class FakeCompetitionSerial:
         elif service == 2 and command in (5, 6):
             response = (100 if command == 5 else 150) + options
             self.inject(bytes((service, command, response)))
+        elif service == 1 and status == 0 and command == 4:
+            self.coil_current_units[:] = [options] * 4
+            self.inject(bytes((service, command, status)))
+        elif service == 1 and status == 0 and 7 <= command <= 10:
+            self.coil_current_units[command - 7] = options
+            self.inject(bytes((service, command, status)))
+        elif service == 1 and status == 0 and 11 <= command <= 14:
+            self.inject(
+                bytes((service, command, self.coil_current_units[command - 11]))
+            )
+        elif service == 1 and status == 0 and command == 15:
+            self.pwm_mode = bool(options)
+            self.inject(bytes((service, command, status)))
+        elif service == 1 and status == 0 and command == 16:
+            self.inject(bytes((service, command, int(self.pwm_mode))))
         else:
             response = options if service == 5 and command in (2, 3) else status
             self.inject(bytes((service, command, response)))
@@ -185,6 +202,34 @@ class CompetitionBoardTests(unittest.TestCase):
             self.assertEqual(connection.writes[3], bytes((1, 1, 0x81)))
             self.assertEqual(connection.writes[4], bytes((1, 6, 0x81)))
             self.assertEqual(connection.writes[5], bytes((1, 2, 0x80)))
+        finally:
+            board.close()
+
+    def test_per_bridge_current_and_pmode_requests(self) -> None:
+        connection = FakeCompetitionSerial()
+        board = CompetitionBoard(connection)
+        try:
+            board.setCurrent(1500, Bridge.H3)
+            self.assertEqual(board.getCurrent(Bridge.H3), 1500)
+            board.setPmode(False)
+            self.assertFalse(board.getPmode())
+
+            self.assertEqual(connection.writes[0], bytes((1, 9, 0xBC)))
+            self.assertEqual(connection.writes[1], bytes((1, 13, 0x80)))
+            self.assertEqual(connection.writes[2], bytes((1, 15, 0x80)))
+            self.assertEqual(connection.writes[3], bytes((1, 16, 0x80)))
+        finally:
+            board.close()
+
+    def test_current_and_pmode_argument_validation(self) -> None:
+        board = CompetitionBoard(FakeCompetitionSerial())
+        try:
+            with self.assertRaises(ValueError):
+                board.setCurrent(1001, Bridge.H1)
+            with self.assertRaises(ValueError):
+                board.getCurrent(Bridge.ALL)
+            with self.assertRaises(TypeError):
+                board.setPmode(1)  # type: ignore[arg-type]
         finally:
             board.close()
 

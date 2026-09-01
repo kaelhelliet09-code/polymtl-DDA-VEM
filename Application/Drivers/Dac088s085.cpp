@@ -1,5 +1,4 @@
-// Implements validated DAC088S085 command framing and bounded SPI transfers
-// with explicit chip-select ownership.
+// Implements validated DAC088S085 command framing over three GPIOs.
 #include "Drivers/Dac088s085.h"
 
 namespace {
@@ -9,11 +8,11 @@ constexpr uint16_t BroadcastCommand = 0xC000U;
 
 namespace dda {
 
-Dac088s085::Dac088s085(SPI_HandleTypeDef &spi, GpioPin &chipSelect) noexcept
-    : _spi(spi), _chipSelect(chipSelect) {}
+Dac088s085::Dac088s085(GpioPin &data, GpioPin &sync, GpioPin &clock) noexcept
+    : _data(data), _sync(sync), _clock(clock) {}
 
 HAL_StatusTypeDef Dac088s085::init(uint32_t timeoutMs) noexcept {
-  if (!_chipSelect.set()) {
+  if (!_sync.set() || !_clock.reset() || !_data.reset()) {
     return HAL_ERROR;
   }
   return transmit(WriteThroughMode, timeoutMs);
@@ -43,11 +42,8 @@ HAL_StatusTypeDef Dac088s085::writeAll(uint8_t value,
 }
 
 HAL_StatusTypeDef Dac088s085::abort() noexcept {
-  const HAL_StatusTypeDef status =
-      (HAL_SPI_GetState(&_spi) == HAL_SPI_STATE_READY) ? HAL_OK
-                                                       : HAL_SPI_Abort(&_spi);
-  // Chip select must be high even if HAL_SPI_Abort reports an error.
-  return _chipSelect.set() ? status : HAL_ERROR;
+  return (_sync.set() && _clock.reset() && _data.reset()) ? HAL_OK
+                                                          : HAL_ERROR;
 }
 
 HAL_StatusTypeDef Dac088s085::writeDac(uint8_t channel, uint8_t value,
@@ -59,17 +55,18 @@ HAL_StatusTypeDef Dac088s085::writeDac(uint8_t channel, uint8_t value,
 
 HAL_StatusTypeDef Dac088s085::transmit(uint16_t frame,
                                        uint32_t timeoutMs) noexcept {
-  if ((timeoutMs == 0U) || !_chipSelect.reset()) {
+  if ((timeoutMs == 0U) || !_sync.reset()) {
     return HAL_ERROR;
   }
 
-  const HAL_StatusTypeDef status = HAL_SPI_Transmit(
-      &_spi, reinterpret_cast<uint8_t *>(&frame), 1U, timeoutMs);
-  // A rising edge latches the 16-bit DAC command.
-  if (!_chipSelect.set()) {
-    return HAL_ERROR;
+  for (uint32_t mask = 0x8000U; mask != 0U; mask >>= 1U) {
+    if (!_data.write((frame & mask) != 0U) || !_clock.set() ||
+        !_clock.reset()) {
+      (void)_sync.set();
+      return HAL_ERROR;
+    }
   }
-  return status;
+  return _sync.set() ? HAL_OK : HAL_ERROR;
 }
 
 } // namespace dda

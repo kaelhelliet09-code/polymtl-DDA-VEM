@@ -1,21 +1,13 @@
-// Implements logical sensor-to-DAC routing, interrupt trigger publication,
-// and delegation to the transactional calibration store.
+// Implements per-sensor LED GPIO control, VTRIP DAC routing, and non-blocking
+// interrupt debounce/capture.
 #include "Service/Sensor/SensorController.h"
 
-#include "Config/SensorConfig.h"
 #include "Platform/Stm32/System/InterruptGuard.h"
 #include "Platform/Stm32/System/Timestamp.h"
-#include "Service/Calibration/CalibrationStore.h"
-#include "Service/Power/CoilController.h"
 #include "Service/Sensor/SensorRequests.h"
-#include "stm32g0xx_hal_def.h"
-#include <cstdint>
-
-extern "C" {
-#include "main.h"
-}
 
 namespace {
+
 constexpr uint8_t sensorIndex(dda::SensorId sensor) noexcept {
   return static_cast<uint8_t>(sensor);
 }
@@ -25,35 +17,35 @@ constexpr uint8_t sensorIndex(dda::SensorId sensor) noexcept {
 namespace dda {
 
 SensorController::SensorController(Dac088s085 &dac,
-                                   CalibrationStore &calibrationStore,
                                    RequestManager &requestManager) noexcept
     : _sensors{
           {config::SensorHardwareConfigs[0].id,
            config::SensorHardwareConfigs[0].inputPort,
            config::SensorHardwareConfigs[0].inputPin,
-           config::SensorHardwareConfigs[0].ledCurrentChannel,
+           config::SensorHardwareConfigs[0].irLedEnablePort,
+           config::SensorHardwareConfigs[0].irLedEnablePin,
            config::SensorHardwareConfigs[0].tripVoltageChannel},
           {config::SensorHardwareConfigs[1].id,
            config::SensorHardwareConfigs[1].inputPort,
            config::SensorHardwareConfigs[1].inputPin,
-           config::SensorHardwareConfigs[1].ledCurrentChannel,
+           config::SensorHardwareConfigs[1].irLedEnablePort,
+           config::SensorHardwareConfigs[1].irLedEnablePin,
            config::SensorHardwareConfigs[1].tripVoltageChannel},
           {config::SensorHardwareConfigs[2].id,
            config::SensorHardwareConfigs[2].inputPort,
            config::SensorHardwareConfigs[2].inputPin,
-           config::SensorHardwareConfigs[2].ledCurrentChannel,
+           config::SensorHardwareConfigs[2].irLedEnablePort,
+           config::SensorHardwareConfigs[2].irLedEnablePin,
            config::SensorHardwareConfigs[2].tripVoltageChannel},
           {config::SensorHardwareConfigs[3].id,
            config::SensorHardwareConfigs[3].inputPort,
            config::SensorHardwareConfigs[3].inputPin,
-           config::SensorHardwareConfigs[3].ledCurrentChannel,
+           config::SensorHardwareConfigs[3].irLedEnablePort,
+           config::SensorHardwareConfigs[3].irLedEnablePin,
            config::SensorHardwareConfigs[3].tripVoltageChannel},
       },
-      _dac(dac), _calibrationStore(calibrationStore),
-      _requestManager(requestManager), _pendingTriggers(0U),
-      _hostCalibrationRequested(false), _hostCalibrationActive(false),
-      _hostCalibrationResultReady(false),
-      _hostCalibrationSucceeded(false), _launchCaptureActive(false) {
+      _dac(dac), _requestManager(requestManager), _pendingTriggers(0U),
+      _launchCaptureActive(false) {
   _requestManager.registerService(Service::SensorControl, *this);
 }
 
@@ -62,30 +54,31 @@ HAL_StatusTypeDef SensorController::setTripVoltageCode(Sensor &sensor,
   return sensor.setVoltageTripCode(_dac, code);
 }
 
-HAL_StatusTypeDef SensorController::clearSensorDacOutputs() noexcept {
-  return _dac.writeAll(0, dda::config::SensorCalibrationDacTimeoutMilliseconds);
+bool SensorController::setIrLedEnabled(Sensor &sensor, bool enabled) noexcept {
+  return sensor.setIrLedEnabled(enabled);
 }
 
-HAL_StatusTypeDef SensorController::setToCalibrated(Sensor &sensor) noexcept {
-  SensorCalibrationData calibration{};
-  if (_calibrationStore.readSensor(sensor._sensorId, calibration) !=
-      CalibrationStoreResult::Ok) {
-    return HAL_ERROR;
+HAL_StatusTypeDef SensorController::clearSensorDacOutputs() noexcept {
+  HAL_StatusTypeDef firstFailure = HAL_OK;
+  for (Sensor &sensor : _sensors) {
+    if (!sensor.setIrLedEnabled(false) && (firstFailure == HAL_OK)) {
+      firstFailure = HAL_ERROR;
+    }
+    const HAL_StatusTypeDef status = sensor.setVoltageTripCode(_dac, 0U);
+    if ((firstFailure == HAL_OK) && (status != HAL_OK)) {
+      firstFailure = status;
+    }
   }
-  auto status = sensor.setCurrentLedCode(_dac, calibration.currentLedCode);
-  if (status != HAL_OK) {
-    return status;
-  }
-  return sensor.setVoltageTripCode(_dac, calibration.voltageTripCode);
+  return firstFailure;
 }
 
 HAL_StatusTypeDef SensorController::setToDefault(Sensor &sensor) noexcept {
-  auto status =
-      sensor.setCurrentLedCode(_dac, config::DefaultSensorLedCurrentCode);
+  const HAL_StatusTypeDef status =
+      sensor.setVoltageTripCode(_dac, config::DefaultSensorTripVoltageCode);
   if (status != HAL_OK) {
     return status;
   }
-  return sensor.setVoltageTripCode(_dac, config::DefaultSensorTripVoltageCode);
+  return sensor.setIrLedEnabled(true) ? HAL_OK : HAL_ERROR;
 }
 
 HAL_StatusTypeDef SensorController::setAllDefault() noexcept {
@@ -98,104 +91,17 @@ HAL_StatusTypeDef SensorController::setAllDefault() noexcept {
   return HAL_OK;
 }
 
-HAL_StatusTypeDef SensorController::setAllCalibrated() noexcept {
-  for (Sensor &sensor : _sensors) {
-    const HAL_StatusTypeDef status = setToCalibrated(sensor);
-    if (status != HAL_OK) {
-      return status;
-    }
-  }
-  return HAL_OK;
-}
-
-bool SensorController::calibrateSensor(Sensor &sensor) noexcept {
-  sensor.clearTriggered();
-  uint8_t finalTripCode = config::SensorCalibrationMaximumDacCode;
-  uint8_t finalCurrentCode = config::SensorCalibrationInitialLedCode;
-
-  if (sensor.setCurrentLedCode(
-          _dac, config::SensorCalibrationInitialLedCode,
-          config::SensorCalibrationDacTimeoutMilliseconds) != HAL_OK) {
-    return false;
-  }
-
-  for (uint8_t tripCode = config::SensorCalibrationInitialTripCode;
-       tripCode <= config::SensorCalibrationMaximumDacCode; ++tripCode) {
-    if (sensor.setVoltageTripCode(
-            _dac, tripCode, config::SensorCalibrationDacTimeoutMilliseconds) !=
-        HAL_OK) {
-      return false;
-    }
-    HAL_Delay(config::SensorCalibrationSettlingMilliseconds);
-    if (sensor.refreshTriggered()) {
-      finalTripCode = tripCode;
-      break;
-    }
-  }
-
-  if (!sensor.wasTriggered()) {
-    for (uint8_t ledCode = config::SensorCalibrationInitialLedCode;
-         ledCode <= config::SensorCalibrationMaximumDacCode; ++ledCode) {
-      if (sensor.setCurrentLedCode(
-              _dac, ledCode, config::SensorCalibrationDacTimeoutMilliseconds) !=
-          HAL_OK) {
-        return false;
-      }
-      HAL_Delay(config::SensorCalibrationSettlingMilliseconds);
-      if (sensor.refreshTriggered()) {
-        finalCurrentCode = ledCode;
-        break;
-      }
-    }
-  }
-
-  if (!sensor.wasTriggered()) {
-    return false;
-  }
-
-  const SensorCalibrationData calibration{finalCurrentCode, finalTripCode};
-  return _calibrationStore.saveSensor(sensor._sensorId, calibration) ==
-         CalibrationStoreResult::Ok;
-}
-
-bool SensorController::runAutomaticCalibrationBlocking(
-    CoilController &coils) noexcept {
-  if (coils.disableAll() != HAL_OK) {
-    return false;
-  }
-
-  bool success = true;
-  for (uint8_t sensorIndex = 0U; sensorIndex < config::SensorCount;
-       ++sensorIndex) {
-    if ((_dac.writeAll(0U, config::SensorDacTimeoutMilliseconds) != HAL_OK) ||
-        !calibrateSensor(_sensors[sensorIndex])) {
-      success = false;
-      break;
-    }
-  }
-  const bool outputsCleared =
-      _dac.writeAll(0U, config::SensorDacTimeoutMilliseconds) == HAL_OK;
-  return success && outputsCleared;
-}
-
-bool SensorController::takeHostCalibrationRequest() noexcept {
-  InterruptGuard interruptGuard;
-  const bool requested = _hostCalibrationRequested;
-  _hostCalibrationRequested = false;
-  return requested;
-}
-
-void SensorController::completeHostCalibration(bool succeeded) noexcept {
-  _hostCalibrationSucceeded = succeeded;
-  _hostCalibrationResultReady = true;
-}
-
 Sensor &SensorController::sensor(uint8_t index) noexcept {
   return _sensors[index];
 }
 
 void SensorController::handleSensorInterrupt(Sensor &sensor,
                                              SensorEdge edge) noexcept {
+  const uint32_t edgeTimestamp = timestamp.now();
+  if (!sensor.acceptEdge(edge, edgeTimestamp)) {
+    return;
+  }
+
   if (edge == SensorEdge::Rising) {
     sensor._triggered = true;
     _pendingTriggers = static_cast<uint8_t>(
@@ -203,7 +109,7 @@ void SensorController::handleSensorInterrupt(Sensor &sensor,
   }
 
   if (_launchCaptureActive) {
-    sensor.recordEdge(edge, timestamp.now());
+    sensor.recordEdge(edge, edgeTimestamp);
   }
 
   Request notification{};
@@ -219,6 +125,7 @@ void SensorController::beginLaunchCapture() noexcept {
   InterruptGuard interruptGuard;
   for (Sensor &sensor : _sensors) {
     sensor.clearEvents();
+    sensor.resetDebounce();
   }
   _launchCaptureActive = true;
 }
@@ -241,8 +148,6 @@ void SensorController::copyLaunchEvents(SensorEvents *events,
 bool SensorController::takeTrigger(Sensor &sensor) noexcept {
   const uint8_t mask =
       static_cast<uint8_t>(1U << sensorIndex(sensor._sensorId));
-  // Atomically consume only the requested bit; ISR code may publish another
-  // sensor trigger while foreground processing handles the returned event.
   InterruptGuard interruptGuard;
   const bool triggered = (_pendingTriggers & mask) != 0U;
   _pendingTriggers = static_cast<uint8_t>(_pendingTriggers & ~mask);
@@ -254,29 +159,6 @@ uint8_t SensorController::takePendingTriggers() noexcept {
   const uint8_t triggers = _pendingTriggers;
   _pendingTriggers = 0U;
   return triggers;
-}
-
-CalibrationStoreResult
-SensorController::readCalibration(const Sensor &sensor,
-                                  SensorCalibrationData &data) const noexcept {
-  return _calibrationStore.readSensor(sensor._sensorId, data);
-}
-
-CalibrationStoreResult
-SensorController::saveCalibration(const Sensor &sensor,
-                                  CalibrationDacCode currentLedCode,
-                                  CalibrationDacCode voltageTripCode) noexcept {
-  return _calibrationStore.saveSensor(sensor._sensorId,
-                                      {currentLedCode, voltageTripCode});
-}
-
-CalibrationStoreResult
-SensorController::calibrationStoreStatus() const noexcept {
-  return _calibrationStore.initializationResult();
-}
-
-uint32_t SensorController::calibrationFlashErrorFlags() const noexcept {
-  return _calibrationStore.flashErrorFlags();
 }
 
 void SensorController::processRequest(Request &request) noexcept {
@@ -291,26 +173,9 @@ void SensorController::processRequest(Request &request) noexcept {
   const bool sensorSelected = selection < config::SensorCount;
 
   switch (static_cast<SensorCommand>(request.command)) {
-  case SensorCommand::SensorCalibration:
-    if (_hostCalibrationResultReady) {
-      succeeded = _hostCalibrationSucceeded;
-      _hostCalibrationResultReady = false;
-      _hostCalibrationActive = false;
-      break;
-    }
-    if (!_hostCalibrationActive) {
-      _hostCalibrationActive = true;
-      _hostCalibrationRequested = true;
-    }
-    return;
   case SensorCommand::SetDefaultLevels:
     succeeded = (allSelected      ? setAllDefault()
                  : sensorSelected ? setToDefault(_sensors[selection])
-                                  : HAL_ERROR) == HAL_OK;
-    break;
-  case SensorCommand::SetCalibrationLevels:
-    succeeded = (allSelected      ? setAllCalibrated()
-                 : sensorSelected ? setToCalibrated(_sensors[selection])
                                   : HAL_ERROR) == HAL_OK;
     break;
   case SensorCommand::UnlockSensor:
@@ -318,21 +183,13 @@ void SensorController::processRequest(Request &request) noexcept {
     succeeded = true;
     break;
   case SensorCommand::ReadCalibrationLedCode:
-  case SensorCommand::ReadCalibrationTripCode: {
-    SensorCalibrationData calibration{};
+  case SensorCommand::ReadCalibrationTripCode:
     request.options = CalibrationValueUnavailable;
-    if (sensorSelected && (_calibrationStore.readSensor(
-                               _sensors[selection]._sensorId, calibration) ==
-                           CalibrationStoreResult::Ok)) {
-      request.options = static_cast<SensorCommand>(request.command) ==
-                                SensorCommand::ReadCalibrationLedCode
-                            ? calibration.currentLedCode
-                            : calibration.voltageTripCode;
-    }
     request.complete(Service::SensorControl);
     return;
-  }
   case SensorCommand::ReportSensor:
+  case SensorCommand::SensorCalibration:
+  case SensorCommand::SetCalibrationLevels:
   default:
     break;
   }

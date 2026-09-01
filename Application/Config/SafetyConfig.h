@@ -23,15 +23,11 @@ inline constexpr uint32_t FaultReleaseValidationMilliseconds = 20U;
 ///< Continuous all-high nFAULT/POWER_ALERT interval required by ClearFault.
 inline constexpr uint32_t PowerAlertRepeatWindowMilliseconds = 1000U;
 ///< Window in which a second released power alert becomes a latched fault.
-inline constexpr uint32_t DirectionDeadTimeMicroseconds = 10U;
-///< Minimum all-off interval before an energized direction transition.
 inline constexpr uint32_t DriverWakeQualificationMilliseconds = 10U;
 ///< Conservative nSLEEP wake and nFAULT-release qualification interval.
 
 static_assert(SafeStartupCurrentMilliamps == 0U && SafeStartupDacCode == 0U,
               "Safe startup must command zero energy");
-static_assert(DirectionDeadTimeMicroseconds > 0U,
-              "Direction reversal requires an all-off interval");
 static_assert(DriverWakeQualificationMilliseconds > 0U,
               "Driver wake qualification must be nonzero");
 
