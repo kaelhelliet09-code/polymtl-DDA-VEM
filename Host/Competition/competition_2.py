@@ -4,7 +4,7 @@ from dda_host import Bobine, Capteur, CarteCompetition, Direction
 
 def participant_code(carte: CarteCompetition):
     carte.demarrerLancement()
-    carte.reglerCourant(2000)
+    carte.reglerCourant(3000)
     ##################################
     carte.activer(Bobine.H1, Direction.AVANT)
     carte.activer(Bobine.H2, Direction.AVANT)
