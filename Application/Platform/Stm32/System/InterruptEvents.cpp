@@ -15,17 +15,17 @@ extern TIM_HandleTypeDef htim2;
 namespace {
 dda::SensorController *interruptSensorTarget = nullptr;
 volatile bool safetyInterruptPending = false;
-uint32_t velocitySensor1Timestamp = 0U;
-bool velocitySensor1Captured = false;
+uint32_t firstVelocityTimestamp = 0U;
+bool firstVelocitySensorCaptured = false;
 
-// DDA_V2.ioc maps VEL_SENSOR_1/PC7 to TIM2_CH4 and VEL_SENSOR_2/PC6 to
-// TIM2_CH3. Keep the HAL channel and active-channel enum domains paired.
-constexpr uint32_t VelocitySensor1CaptureChannel = TIM_CHANNEL_4;
-constexpr uint32_t VelocitySensor2CaptureChannel = TIM_CHANNEL_3;
-constexpr HAL_TIM_ActiveChannel VelocitySensor1ActiveChannel =
-    HAL_TIM_ACTIVE_CHANNEL_4;
-constexpr HAL_TIM_ActiveChannel VelocitySensor2ActiveChannel =
+// The projectile crosses VEL_SENSOR_2/PC6 first, then VEL_SENSOR_1/PC7.
+// Keep the HAL capture-channel and active-channel enum domains paired.
+constexpr uint32_t FirstVelocityCaptureChannel = TIM_CHANNEL_3;
+constexpr uint32_t SecondVelocityCaptureChannel = TIM_CHANNEL_4;
+constexpr HAL_TIM_ActiveChannel FirstVelocityActiveChannel =
     HAL_TIM_ACTIVE_CHANNEL_3;
+constexpr HAL_TIM_ActiveChannel SecondVelocityActiveChannel =
+    HAL_TIM_ACTIVE_CHANNEL_4;
 
 constexpr uint32_t gpioTwoBitFieldMask(uint32_t pins) noexcept {
   uint32_t mask = 0U;
@@ -63,14 +63,14 @@ namespace dda {
 void initializeInterruptEvents(SensorController &sensors) noexcept {
   InterruptGuard interruptGuard;
   interruptSensorTarget = &sensors;
-  velocitySensor1Captured = false;
+  firstVelocitySensorCaptured = false;
   __HAL_TIM_CLEAR_FLAG(&htim2, TIM_FLAG_CC3 | TIM_FLAG_CC4);
   HAL_NVIC_ClearPendingIRQ(TIM2_IRQn);
-  const HAL_StatusTypeDef sensor1Status =
-      HAL_TIM_IC_Start_IT(&htim2, VelocitySensor1CaptureChannel);
-  const HAL_StatusTypeDef sensor2Status =
-      HAL_TIM_IC_Start_IT(&htim2, VelocitySensor2CaptureChannel);
-  if ((sensor1Status == HAL_OK) && (sensor2Status == HAL_OK)) {
+  const HAL_StatusTypeDef firstSensorStatus =
+      HAL_TIM_IC_Start_IT(&htim2, FirstVelocityCaptureChannel);
+  const HAL_StatusTypeDef secondSensorStatus =
+      HAL_TIM_IC_Start_IT(&htim2, SecondVelocityCaptureChannel);
+  if ((firstSensorStatus == HAL_OK) && (secondSensorStatus == HAL_OK)) {
     HAL_NVIC_SetPriority(TIM2_IRQn, 1U, 0U);
     HAL_NVIC_EnableIRQ(TIM2_IRQn);
   } else {
@@ -170,19 +170,18 @@ extern "C" void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
   // APIs take TIM_CHANNEL_x. These constants are different enum domains (and
   // ACTIVE_CHANNEL_4 has the same numeric value as TIM_CHANNEL_3), so they
   // must never be compared interchangeably.
-  if (htim->Channel == VelocitySensor1ActiveChannel) {
-    velocitySensor1Timestamp =
-        HAL_TIM_ReadCapturedValue(htim, VelocitySensor1CaptureChannel);
-    velocitySensor1Captured = true;
+  if (htim->Channel == FirstVelocityActiveChannel) {
+    firstVelocityTimestamp =
+        HAL_TIM_ReadCapturedValue(htim, FirstVelocityCaptureChannel);
+    firstVelocitySensorCaptured = true;
     return;
   }
-  if ((htim->Channel == VelocitySensor2ActiveChannel) &&
-      velocitySensor1Captured) {
-    const uint32_t velocitySensor2Timestamp =
-        HAL_TIM_ReadCapturedValue(htim, VelocitySensor2CaptureChannel);
-    const uint32_t tickDelta =
-        velocitySensor2Timestamp - velocitySensor1Timestamp;
-    velocitySensor1Captured = false;
+  if ((htim->Channel == SecondVelocityActiveChannel) &&
+      firstVelocitySensorCaptured) {
+    const uint32_t secondVelocityTimestamp =
+        HAL_TIM_ReadCapturedValue(htim, SecondVelocityCaptureChannel);
+    const uint32_t tickDelta = secondVelocityTimestamp - firstVelocityTimestamp;
+    firstVelocitySensorCaptured = false;
     if ((interruptSensorTarget != nullptr) && (tickDelta != 0U)) {
       interruptSensorTarget->_velocitySensor.markSpeedCaptureEvent(tickDelta);
     }

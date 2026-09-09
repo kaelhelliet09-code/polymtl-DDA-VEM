@@ -53,7 +53,7 @@ bool RequestManager::queueRequest(const Request &request) noexcept {
     queuedRequest.destination = Service::UsbControl;
     queuedRequest.source = request.destination;
     queuedRequest.options =
-        static_cast<uint8_t>(RequestStatus::BlockedDuringLaunch);
+        static_cast<uint8_t>(RequestStatus::BlockedOutsideLaunch);
     queuedRequest.requiresAnswer = false;
     queuedRequest.state = RequestState::Outgoing;
   }
@@ -170,7 +170,7 @@ bool RequestManager::blocksSensorNotification(
 }
 
 bool RequestManager::blocksHostRequest(const Request &request) const noexcept {
-  return _launchActive && !_debugMode &&
+  return !_launchActive && !_debugMode &&
          (request.source == Service::UsbControl) &&
          ((request.destination == Service::CoilControl) ||
           (request.destination == Service::SensorControl));

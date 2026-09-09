@@ -1,0 +1,56 @@
+set(CMAKE_SYSTEM_NAME Generic)
+set(CMAKE_SYSTEM_PROCESSOR arm)
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+
+if(CMAKE_HOST_WIN32 AND NOT CMAKE_MAKE_PROGRAM AND DEFINED ENV{LOCALAPPDATA})
+    file(GLOB STM32_NINJA
+        "$ENV{LOCALAPPDATA}/stm32cube/bundles/ninja/*/bin/ninja.exe")
+    list(SORT STM32_NINJA COMPARE NATURAL ORDER DESCENDING)
+    if(STM32_NINJA)
+        list(GET STM32_NINJA 0 CMAKE_MAKE_PROGRAM)
+        set(CMAKE_MAKE_PROGRAM "${CMAKE_MAKE_PROGRAM}" CACHE FILEPATH "")
+    endif()
+endif()
+
+set(STM32_GNU_TOOLCHAIN_BIN "" CACHE PATH
+    "Directory containing arm-none-eabi-gcc")
+if(STM32_GNU_TOOLCHAIN_BIN)
+    set(ARM_BIN "${STM32_GNU_TOOLCHAIN_BIN}")
+else()
+    find_program(ARM_GCC NAMES arm-none-eabi-gcc)
+    if(ARM_GCC)
+        get_filename_component(ARM_BIN "${ARM_GCC}" DIRECTORY)
+    elseif(CMAKE_HOST_WIN32 AND DEFINED ENV{LOCALAPPDATA})
+        file(GLOB STM32_GNU_BINS LIST_DIRECTORIES true
+            "$ENV{LOCALAPPDATA}/stm32cube/bundles/gnu-tools-for-stm32/*/bin")
+        list(SORT STM32_GNU_BINS COMPARE NATURAL ORDER DESCENDING)
+        foreach(CANDIDATE IN LISTS STM32_GNU_BINS)
+            if(EXISTS "${CANDIDATE}/arm-none-eabi-gcc.exe")
+                set(ARM_BIN "${CANDIDATE}")
+                break()
+            endif()
+        endforeach()
+    endif()
+endif()
+
+if(NOT ARM_BIN)
+    message(FATAL_ERROR "GNU Arm toolchain not found; set STM32_GNU_TOOLCHAIN_BIN")
+endif()
+
+if(CMAKE_HOST_WIN32)
+    set(TOOL_SUFFIX ".exe")
+else()
+    set(TOOL_SUFFIX "")
+endif()
+
+set(CMAKE_C_COMPILER "${ARM_BIN}/arm-none-eabi-gcc${TOOL_SUFFIX}")
+set(CMAKE_ASM_COMPILER "${CMAKE_C_COMPILER}")
+set(CMAKE_OBJCOPY "${ARM_BIN}/arm-none-eabi-objcopy${TOOL_SUFFIX}")
+set(CMAKE_SIZE "${ARM_BIN}/arm-none-eabi-size${TOOL_SUFFIX}")
+
+set(CMAKE_EXECUTABLE_SUFFIX_C ".elf")
+set(CMAKE_EXECUTABLE_SUFFIX_ASM ".elf")
+
+set(CMAKE_C_FLAGS_INIT "-mcpu=cortex-m0plus -mthumb")
+set(CMAKE_ASM_FLAGS_INIT "-mcpu=cortex-m0plus -mthumb -x assembler-with-cpp")
+set(CMAKE_EXE_LINKER_FLAGS_INIT "-mcpu=cortex-m0plus -mthumb")

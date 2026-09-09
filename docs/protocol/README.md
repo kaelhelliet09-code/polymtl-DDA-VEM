@@ -5,9 +5,11 @@ Bit 7 of request options asks for a response; the remaining seven bits carry
 the request value. Response options may use all eight bits. LaunchData uses its
 separate chunked, CRC-protected framing.
 
-Firmware framing lives in `Application/Service/Usb`; the supported Python
-implementation lives in `Host/src/dda_host/competition.py`. Keep service and
-command values synchronized between those implementations.
+Firmware framing lives in `Application/Service/Usb`; the complete Python
+implementation lives in `Host/Technician/src/dda_host/competition.py`. The
+competition distribution keeps an internal copy in
+`Host/Competition/src/dda_host/_client.py`. Keep service and command values
+synchronized between these implementations.
 
 ## Coil service additions for DDA V2
 

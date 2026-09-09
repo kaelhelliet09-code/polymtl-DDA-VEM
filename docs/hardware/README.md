@@ -25,7 +25,8 @@ DMA order to `H1,H2,H3,H4` before launch data is exposed.
 
 The generated timer map assigns velocity sensor 1 on PC7 to TIM2 CH4 and
 velocity sensor 2 on PC6 to TIM2 CH3; the capture adapter uses those generated
-channel identities rather than their numeric sensor order.
+channel identities rather than their numeric sensor order. In the projectile's
+direction of travel, PC6/CH3 is captured first and PC7/CH4 second.
 
 PMODE is PC4 and starts high for PWM mode. The DRV8874 latches PMODE when
 nSLEEP rises, so a PMODE change is accepted only while all four drivers are in

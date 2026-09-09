@@ -94,8 +94,6 @@ void Error_Handler(void);
 #define IN2_H3_GPIO_Port GPIOB
 #define IN1_H3_Pin GPIO_PIN_2
 #define IN1_H3_GPIO_Port GPIOB
-#define DAC_SCLK_Pin GPIO_PIN_3
-#define DAC_SCLK_GPIO_Port GPIOB
 #define CURRENT_H4_Pin GPIO_PIN_10
 #define CURRENT_H4_GPIO_Port GPIOB
 #define FAULT_H4_Pin GPIO_PIN_11
@@ -104,10 +102,10 @@ void Error_Handler(void);
 #define IN2_H4_GPIO_Port GPIOB
 #define IN1_H4_Pin GPIO_PIN_13
 #define IN1_H4_GPIO_Port GPIOB
-#define SLEEP_H3_Pin GPIO_PIN_15
-#define SLEEP_H3_GPIO_Port GPIOB
 #define SLEEP_H4_Pin GPIO_PIN_14
 #define SLEEP_H4_GPIO_Port GPIOB
+#define SLEEP_H3_Pin GPIO_PIN_15
+#define SLEEP_H3_GPIO_Port GPIOB
 #define SENSOR_3_Pin GPIO_PIN_8
 #define SENSOR_3_GPIO_Port GPIOA
 #define SENSOR_4_Pin GPIO_PIN_9
@@ -124,6 +122,8 @@ void Error_Handler(void);
 #define DAC_DIN_GPIO_Port GPIOD
 #define DAC_SYNC_Pin GPIO_PIN_6
 #define DAC_SYNC_GPIO_Port GPIOD
+#define DAC_SCLK_Pin GPIO_PIN_3
+#define DAC_SCLK_GPIO_Port GPIOB
 #define STATUS_LED_1_Pin GPIO_PIN_5
 #define STATUS_LED_1_GPIO_Port GPIOB
 #define POWER_ALERT_Pin GPIO_PIN_10

@@ -22,24 +22,24 @@ namespace dda::config {
 
 /** @brief Fixed GPIO and external-DAC mapping for one sensor channel. */
 struct SensorHardwareConfig {
-  SensorId id;                    ///< Zero-based sensor identity.
-  GPIO_TypeDef *inputPort;        ///< Trigger-input GPIO port.
-  uint16_t inputPin;              ///< Trigger-input GPIO pin mask.
-  GPIO_TypeDef *irLedEnablePort;  ///< GPIO output driving the sensor IR LED.
-  uint16_t irLedEnablePin;        ///< IR-LED enable GPIO pin mask.
-  DacChannel tripVoltageChannel;  ///< DAC channel controlling trip voltage.
+  SensorId id;                   ///< Zero-based sensor identity.
+  GPIO_TypeDef *inputPort;       ///< Trigger-input GPIO port.
+  uint16_t inputPin;             ///< Trigger-input GPIO pin mask.
+  GPIO_TypeDef *irLedEnablePort; ///< GPIO output driving the sensor IR LED.
+  uint16_t irLedEnablePin;       ///< IR-LED enable GPIO pin mask.
+  DacChannel tripVoltageChannel; ///< DAC channel controlling trip voltage.
 };
 
 /** @brief Complete compile-time hardware mapping for all sensor channels. */
 inline const SensorHardwareConfig SensorHardwareConfigs[SensorCount] = {
-    {SensorId::SENSOR_1, SENSOR_1_GPIO_Port, SENSOR_1_Pin,
-     SENSOR_ENA_GPIO_Port, SENSOR_ENA_Pin, SensorTripVoltageDacChannels[0]},
-    {SensorId::SENSOR_2, SENSOR_2_GPIO_Port, SENSOR_2_Pin,
-     SENSOR_ENA_GPIO_Port, SENSOR_ENA_Pin, SensorTripVoltageDacChannels[1]},
-    {SensorId::SENSOR_3, SENSOR_3_GPIO_Port, SENSOR_3_Pin,
-     SENSOR_ENA_GPIO_Port, SENSOR_ENA_Pin, SensorTripVoltageDacChannels[2]},
-    {SensorId::SENSOR_4, SENSOR_4_GPIO_Port, SENSOR_4_Pin,
-     SENSOR_ENA_GPIO_Port, SENSOR_ENA_Pin, SensorTripVoltageDacChannels[3]},
+    {SensorId::SENSOR_1, SENSOR_1_GPIO_Port, SENSOR_1_Pin, SENSOR_ENA_GPIO_Port,
+     SENSOR_ENA_Pin, SensorTripVoltageDacChannels[0]},
+    {SensorId::SENSOR_2, SENSOR_2_GPIO_Port, SENSOR_2_Pin, SENSOR_ENA_GPIO_Port,
+     SENSOR_ENA_Pin, SensorTripVoltageDacChannels[1]},
+    {SensorId::SENSOR_3, SENSOR_3_GPIO_Port, SENSOR_3_Pin, SENSOR_ENA_GPIO_Port,
+     SENSOR_ENA_Pin, SensorTripVoltageDacChannels[2]},
+    {SensorId::SENSOR_4, SENSOR_4_GPIO_Port, SENSOR_4_Pin, SENSOR_ENA_GPIO_Port,
+     SENSOR_ENA_Pin, SensorTripVoltageDacChannels[3]},
 };
 
 /**
@@ -55,7 +55,7 @@ inline constexpr uint32_t SensorDacTimeoutMilliseconds = 100U;
 ///< Normal blocking external-DAC write timeout.
 inline constexpr GPIO_PinState SensorTriggeredState = GPIO_PIN_SET;
 ///< GPIO state treated as a sensor trigger.
-inline constexpr uint8_t DefaultSensorTripVoltageCode = 200U;
+inline constexpr uint8_t DefaultSensorTripVoltageCode = 100U;
 ///< Raw VTRIP code applied when default sensor levels are requested.
 
 /**

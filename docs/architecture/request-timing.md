@@ -21,13 +21,14 @@ not be interpreted as synchronized laboratory measurements.
 
 ## Debug and competition modes
 
-The firmware starts in competition mode. `CompetitionBoard.connect()` selects
-debug mode by default; the runner's `--competition` option explicitly keeps
-competition behavior.
+The firmware starts in competition mode. The complete technician API selects
+debug mode by default, while `Host/Competition/run_competition.py` explicitly
+keeps competition behavior and does not expose mode selection.
 
 | Behavior | Debug mode | Competition mode |
 | --- | --- | --- |
-| Host coil and sensor commands during a launch | Allowed | Rejected by `RequestManager` |
+| Host coil and sensor commands outside a launch | Allowed | Rejected by `RequestManager` |
+| Host coil and sensor commands during a launch | Allowed | Allowed |
 | Current, power, sensor, velocity LaunchData | Sent | Sent |
 | Request snapshots in LaunchData | Sent, up to 256 | Snapshot count is zero |
 | Host request timestamps retained for analysis | Yes | No |
@@ -35,8 +36,8 @@ competition behavior.
 | Latency plot opened | Yes, when samples match | No |
 | Safety interlocks and fault handling | Active | Active |
 
-Debug mode removes the competition command lockout; it does not bypass bridge,
-power, communication, or safe-state protections.
+Debug mode removes the competition-mode outside-launch command lockout; it does
+not bypass bridge, power, communication, or safe-state protections.
 
 ## End-to-end architecture
 
@@ -192,19 +193,15 @@ Flash the matching firmware, install the host package, and run without the
 competition flag:
 
 ```powershell
-cd Host
+cd Host\Technician
 python -m pip install -e .
-python run_competition.py --port COM7
+python test_ponts_h.py
 ```
 
-The timing table is printed after LaunchData is validated. The existing launch
-overview and detail windows open together with the debug latency window.
-
-To exercise production restrictions and suppress telemetry:
-
-```powershell
-python run_competition.py --port COM7 --competition
-```
+The timing table is printed after LaunchData is validated. The launch overview,
+detail windows and debug latency window open together. The separate
+`Host/Competition` runner always uses production restrictions and does not
+expose timing diagnostics.
 
 ## Limitations
 

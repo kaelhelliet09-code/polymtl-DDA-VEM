@@ -17,7 +17,8 @@ Core/              CubeMX startup and peripheral initialization
 Drivers/           STM32 HAL and CMSIS
 Middlewares/       STM32 USB device middleware
 USB_DEVICE/        CubeMX USB CDC integration
-Host/              Python organizer API, runner, and tests
+Host/Competition/  Minimal participant API and competition runner
+Host/Technician/   Full diagnostic API and hardware/software tests
 Tests/Firmware/    Board-independent C++ tests
 docs/              Focused design and hardware notes
 ```
@@ -63,7 +64,7 @@ ctest --preset Host
 Python tests:
 
 ```powershell
-cd Host
+cd Host\Technician
 python -m pip install -e .
 python -m unittest discover -s tests -v
 ```
@@ -71,13 +72,14 @@ python -m unittest discover -s tests -v
 ## Technician board qualification
 
 Flash the current firmware, connect the board over USB CDC, install the Python
-package as shown above, and run from `Host`:
+package as shown above, and run from `Host\Technician`:
 
 ```powershell
-python run_competition.py --port COM7 --technician-test coil
+python test_ponts_h.py
 ```
 
-Omit `--port` when exactly one supported board is attached.
+The script automatically detects the single attached board. The complete
+French procedure is in `Host/Technician/TEST_PONTS_H.md`.
 
 ### Coil test
 
@@ -109,28 +111,18 @@ procedure is specified.
 
 ## Competition runner
 
-Technician tests and normal competition execution share the same organizer
-connection path. Normal debug execution remains:
+Install and run from `Host\Competition`:
 
 ```powershell
-python run_competition.py --port COM7
+python run_competition.py
 ```
 
-Participant code lives in `Host/examples/competition.py`. Add `--competition`
-to exercise the firmware's normal during-launch command lockout.
-
-The two modes deliberately differ during a launch:
-
-| Mode | Coil/sensor commands | Request timing telemetry |
-| --- | --- | --- |
-| Debug, the runner default | Allowed subject to normal safety checks | Printed and plotted after the run |
-| Competition, `--competition` | Rejected while the launch is active | Not exported or analyzed |
-
-Both modes keep all hardware safety interlocks active and return recorded
-current, power, sensor, and velocity data. See the
-[request and sensor latency architecture](docs/architecture/request-timing.md)
-for the complete data flow, timestamp definitions, statistics, and measurement
-limitations.
+Participant code lives in `Host/Competition/competition.py`. The port is
+detected automatically, the board is always placed in competition mode, and
+the public participant API does not expose diagnostic or test operations.
+In competition mode, coil and sensor commands are accepted only while a launch
+is active; launch lifecycle commands remain available so a run can be started
+and stopped.
 
 ## Configuration
 
